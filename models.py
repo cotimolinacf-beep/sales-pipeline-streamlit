@@ -187,6 +187,15 @@ class AbandonmentAnalysis:
 
 
 @dataclass
+class ValueSuggestion:
+    category: str  # "autogestion", "conversion", "cuello_botella", "quick_win"
+    title: str
+    description: str
+    impact: str  # "alto", "medio", "bajo"
+    metric: Optional[str] = None
+
+
+@dataclass
 class PipelineResult:
     pipeline_id: str
     pipeline_name: str
@@ -194,6 +203,7 @@ class PipelineResult:
     total_conversations: int
     funnel: list[FunnelGoal] = field(default_factory=list)
     abandonment_analysis: Optional[AbandonmentAnalysis] = None
+    suggestions: list[ValueSuggestion] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         result = {
@@ -222,44 +232,9 @@ class PipelineResult:
 
 
 @dataclass
-class FrictionPoint:
-    description: str
-    occurrences: int
-    percentage: float
-
-
-@dataclass
-class SentimentSummary:
-    total_analyzed: int
-    satisfied: int
-    neutral: int
-    frustrated: int
-    top_friction_points: list[FrictionPoint] = field(default_factory=list)
-
-    @property
-    def distribution(self) -> dict:
-        return {
-            "satisfied": self.satisfied,
-            "neutral": self.neutral,
-            "frustrated": self.frustrated,
-        }
-
-
-@dataclass
-class ValueSuggestion:
-    category: str  # "autogestion", "conversion", "cuello_botella", "quick_win"
-    title: str
-    description: str
-    impact: str  # "alto", "medio", "bajo"
-    metric: Optional[str] = None
-
-
-@dataclass
 class ConversationDetail:
     """Per-conversation analysis detail (for CSV export)."""
     index: int
-    sentiment: str = ""  # satisfied / neutral / frustrated
-    friction_points: list[str] = field(default_factory=list)
     pipeline_results: dict = field(default_factory=dict)
     # pipeline_results: {pipeline_name: {"objectives": {obj_name: bool}, "keywords": [str]}}
 
@@ -268,7 +243,5 @@ class ConversationDetail:
 class EvaluationResults:
     total_conversations_analyzed: int
     pipelines: list[PipelineResult] = field(default_factory=list)
-    sentiment_summary: Optional[SentimentSummary] = None
-    suggestions: list[ValueSuggestion] = field(default_factory=list)
     conversation_details: list[ConversationDetail] = field(default_factory=list)
     processing_time_seconds: Optional[float] = None

@@ -28,8 +28,6 @@ from charts import (
     pipeline_funnel_chart,
     pipeline_goals_chart,
     keyword_distribution_chart,
-    sentiment_pie_chart,
-    sentiment_bar_chart,
     abandonment_chart,
 )
 
@@ -639,28 +637,14 @@ elif step == 4:
                         help=f"Conversion: {conv_goal.success_count}/{pr.total_conversations}",
                     )
 
-        # ── CSV Download ──
+        # ── CSV Download helper ──
         def build_export_df():
             df_source = st.session_state.uploaded_df
             if df_source is None:
                 return pd.DataFrame()
             export = df_source.copy()
-            # Add sentiment
             conv_details = getattr(results, "conversation_details", []) or []
             if conv_details:
-                sentiments = []
-                frictions = []
-                for i in range(len(export)):
-                    if i < len(conv_details):
-                        cd = conv_details[i]
-                        sentiments.append(cd.sentiment)
-                        frictions.append("; ".join(cd.friction_points) if cd.friction_points else "")
-                    else:
-                        sentiments.append("")
-                        frictions.append("")
-                export["sentimiento"] = sentiments
-                export["puntos_friccion"] = frictions
-
                 # Add per-pipeline objective columns
                 for pr in results.pipelines:
                     p_name = pr.pipeline_name
@@ -676,7 +660,6 @@ elif step == 4:
                                 if col_key not in obj_cols:
                                     obj_cols[col_key] = [""] * i
                                 obj_cols[col_key].append("SI" if success else "NO")
-                            # Fill missing objective columns for this row
                             for col_key in obj_cols:
                                 if len(obj_cols[col_key]) <= i:
                                     obj_cols[col_key].append("")
@@ -688,7 +671,6 @@ elif step == 4:
                             kw_col.append("")
 
                     for col_key, col_vals in obj_cols.items():
-                        # Pad if shorter than export
                         while len(col_vals) < len(export):
                             col_vals.append("")
                         export[col_key] = col_vals
@@ -699,18 +681,29 @@ elif step == 4:
         # ── Pipeline tabs ──
         st.divider()
 
-        # Build tab list: one per pipeline + Sentimiento + Sugerencias
         tab_labels = []
         for pr in results.pipelines:
             type_icon = "🛒" if pr.pipeline_type == "ventas" else "🎧"
             tab_labels.append(f"{type_icon} {pr.pipeline_name}")
-        tab_labels.append("😊 Sentimiento")
-        tab_labels.append("💡 Sugerencias")
         tab_labels.append("📥 Descargar CSV")
 
         tabs = st.tabs(tab_labels)
 
-        # ── Pipeline tabs ──
+        # ── Per-pipeline tabs (funnel + suggestions) ──
+        category_icons = {
+            "autogestion": "🤖",
+            "conversion": "📈",
+            "cuello_botella": "⚠️",
+            "quick_win": "⚡",
+        }
+        category_labels_map = {
+            "autogestion": "Autogestion",
+            "conversion": "Conversion",
+            "cuello_botella": "Cuellos de botella",
+            "quick_win": "Quick Wins",
+        }
+        impact_colors = {"alto": "🔴", "medio": "🟡", "bajo": "🟢"}
+
         for ti, pr in enumerate(results.pipelines):
             with tabs[ti]:
                 # Pipeline header metrics
@@ -734,7 +727,6 @@ elif step == 4:
 
                 # Objective detail cards
                 for goal in pr.funnel:
-                    total_g = goal.success_count + goal.failure_count
                     star = "⭐ " if goal.is_conversion_indicator else ""
                     with st.container(border=True):
                         gc1, gc2, gc3, gc4 = st.columns([3, 1, 1, 1])
@@ -744,7 +736,6 @@ elif step == 4:
                         gc3.metric("Fallidos", goal.failure_count)
                         gc4.metric("Tasa", f"{goal.success_rate:.1f}%")
 
-                        # Keywords inline
                         if goal.keyword_distribution:
                             kw_tags = " · ".join(
                                 f"`{kd.value}` ({kd.count})"
@@ -759,91 +750,39 @@ elif step == 4:
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
 
-        # ── Sentiment tab ──
-        sent_tab_idx = len(results.pipelines)
-        with tabs[sent_tab_idx]:
-            if results.sentiment_summary:
-                ss = results.sentiment_summary
-                total_s = ss.satisfied + ss.neutral + ss.frustrated
+                # ── Suggestions for this pipeline ──
+                pr_suggestions = getattr(pr, "suggestions", []) or []
+                if pr_suggestions:
+                    st.divider()
+                    st.markdown("#### 💡 Sugerencias de valor")
 
-                if total_s > 0:
-                    sm1, sm2, sm3, sm4 = st.columns(4)
-                    sm1.metric("Total analizadas", total_s)
-                    sm2.metric("😊 Satisfechos", ss.satisfied, f"{ss.satisfied/total_s*100:.0f}%")
-                    sm3.metric("😐 Neutrales", ss.neutral, f"{ss.neutral/total_s*100:.0f}%")
-                    sm4.metric("😤 Frustrados", ss.frustrated, f"{ss.frustrated/total_s*100:.0f}%", delta_color="inverse")
+                    grouped: dict[str, list] = {}
+                    for s in pr_suggestions:
+                        grouped.setdefault(s.category, []).append(s)
 
-                cs1, cs2 = st.columns(2)
-                with cs1:
-                    st.plotly_chart(
-                        sentiment_pie_chart(ss.satisfied, ss.neutral, ss.frustrated),
-                        use_container_width=True,
-                    )
-                with cs2:
-                    st.plotly_chart(
-                        sentiment_bar_chart(ss.satisfied, ss.neutral, ss.frustrated),
-                        use_container_width=True,
-                    )
+                    for cat, items in grouped.items():
+                        icon = category_icons.get(cat, "📋")
+                        label = category_labels_map.get(cat, cat)
+                        st.markdown(f"##### {icon} {label}")
 
-                # Friction points
-                if ss.top_friction_points:
-                    st.markdown("#### Puntos de friccion detectados")
-                    for i, fp in enumerate(ss.top_friction_points):
-                        with st.container(border=True):
-                            fc1, fc2, fc3 = st.columns([5, 1, 1])
-                            fc1.markdown(f"**{i+1}.** {fp.description}")
-                            fc2.metric("Casos", fp.occurrences)
-                            fc3.metric("%", f"{fp.percentage:.1f}%")
-            else:
-                st.info("No hay datos de sentimiento disponibles.")
-
-        # ── Suggestions tab ──
-        sugg_tab_idx = len(results.pipelines) + 1
-        with tabs[sugg_tab_idx]:
-            if results.suggestions:
-                category_icons = {
-                    "autogestion": "🤖",
-                    "conversion": "📈",
-                    "cuello_botella": "⚠️",
-                    "quick_win": "⚡",
-                }
-                category_labels = {
-                    "autogestion": "Autogestion",
-                    "conversion": "Conversion",
-                    "cuello_botella": "Cuellos de botella",
-                    "quick_win": "Quick Wins",
-                }
-                impact_colors = {"alto": "🔴", "medio": "🟡", "bajo": "🟢"}
-
-                grouped: dict[str, list] = {}
-                for s in results.suggestions:
-                    grouped.setdefault(s.category, []).append(s)
-
-                for cat, items in grouped.items():
-                    icon = category_icons.get(cat, "📋")
-                    label = category_labels.get(cat, cat)
-                    st.markdown(f"#### {icon} {label}")
-
-                    for s in items:
-                        badge = impact_colors.get(s.impact, "⚪")
-                        with st.container(border=True):
-                            sg1, sg2 = st.columns([5, 1])
-                            sg1.markdown(f"**{s.title}**")
-                            sg2.markdown(f"Impacto: {badge} {s.impact}")
-                            st.markdown(s.description)
-                            if s.metric:
-                                st.caption(f"📊 {s.metric}")
-            else:
-                st.info("No hay sugerencias disponibles.")
+                        for s in items:
+                            badge = impact_colors.get(s.impact, "⚪")
+                            with st.container(border=True):
+                                sg1, sg2 = st.columns([5, 1])
+                                sg1.markdown(f"**{s.title}**")
+                                sg2.markdown(f"Impacto: {badge} {s.impact}")
+                                st.markdown(s.description)
+                                if s.metric:
+                                    st.caption(f"📊 {s.metric}")
 
         # ── CSV Download tab ──
-        csv_tab_idx = len(results.pipelines) + 2
+        csv_tab_idx = len(results.pipelines)
         with tabs[csv_tab_idx]:
             st.markdown("#### Descargar detalle del analisis")
             st.markdown(
                 "El CSV incluye todas las conversaciones originales con columnas "
-                "adicionales de resultados: **sentimiento**, **puntos de friccion**, "
-                "y el resultado de **cada objetivo por pipeline** (SI/NO)."
+                "adicionales: resultado de **cada objetivo por pipeline** (SI/NO) "
+                "y **keywords** encontrados."
             )
 
             export_df = build_export_df()

@@ -20,10 +20,8 @@ class AnalysisState(TypedDict):
     pipelines_config: str       # JSON serialized list of pipeline dicts
     conversations_json: str     # JSON serialized conversation data
     funnel_results: str         # JSON with funnel results per pipeline
-    sentiment_results: str      # JSON with sentiment per conversation
-    friction_results: str       # JSON with friction points
     abandonment_results: str    # JSON with abandonment reasons per pipeline
-    suggestions: str            # JSON with value suggestions
+    suggestions: str            # JSON with value suggestions per pipeline
     current_agent: str
 
 
@@ -119,35 +117,9 @@ REGLAS:
 Responde EXCLUSIVAMENTE con un JSON valido.""")
 
 
-SENTIMENT_ANALYZER_PROMPT = SystemMessage(content="""Eres un experto en analisis de sentimiento de conversaciones de atencion al cliente.
-
-Para cada conversacion, debes determinar:
-
-1. SENTIMIENTO del cliente (no del bot/agente):
-   - "satisfied": El cliente logro su objetivo, se mostro conforme, agradecio.
-   - "neutral": Interaccion funcional sin emociones fuertes positivas ni negativas.
-   - "frustrated": El cliente mostro frustracion, enojo, confusion, o no logro su objetivo.
-
-2. PUNTOS DE FRICCION (si existen):
-   - Momentos especificos donde el cliente tuvo dificultades.
-   - Problemas de comunicacion, falta de informacion, tiempos de espera, etc.
-   - Se lo mas especifico posible sobre QUE causo la friccion.
-
-Responde EXCLUSIVAMENTE con un JSON valido con esta estructura:
-{
-  "conversations": [
-    {
-      "index": 0,
-      "sentiment": "satisfied" | "neutral" | "frustrated",
-      "friction_points": ["descripcion del punto de friccion"]
-    }
-  ]
-}""")
-
-
 VALUE_SUGGESTIONS_PROMPT = SystemMessage(content="""Eres un consultor estrategico especializado en optimizacion de experiencia conversacional, autogestion digital y conversion de ventas.
 
-Tienes los resultados de analisis de un pipeline de conversaciones. Tu tarea es generar sugerencias accionables de alto valor.
+Tienes los resultados de analisis de multiples pipelines de conversaciones. Tu tarea es generar sugerencias accionables de alto valor PARA CADA PIPELINE.
 
 Genera sugerencias en estas 4 categorias:
 
@@ -165,7 +137,7 @@ Genera sugerencias en estas 4 categorias:
 
 3. **CUELLOS DE BOTELLA** (category: "cuello_botella"):
    - Identifica etapas con mayor caida de conversion.
-   - Correlaciona con puntos de friccion y razones de abandono.
+   - Correlaciona con razones de abandono.
    - Propone soluciones especificas para cada cuello de botella.
 
 4. **QUICK WINS** (category: "quick_win"):
@@ -174,15 +146,22 @@ Genera sugerencias en estas 4 categorias:
 
 Para cada sugerencia indica el nivel de impacto: "alto", "medio", "bajo".
 
+IMPORTANTE: Agrupa las sugerencias POR PIPELINE usando el pipeline_id.
+
 Responde EXCLUSIVAMENTE con un JSON valido:
 {
-  "suggestions": [
+  "pipelines": [
     {
-      "category": "autogestion" | "conversion" | "cuello_botella" | "quick_win",
-      "title": "Titulo corto",
-      "description": "Descripcion detallada y accionable",
-      "impact": "alto" | "medio" | "bajo",
-      "metric": "Metrica relevante si aplica (ej: '68% de consultas')"
+      "pipeline_id": "id del pipeline",
+      "suggestions": [
+        {
+          "category": "autogestion" | "conversion" | "cuello_botella" | "quick_win",
+          "title": "Titulo corto",
+          "description": "Descripcion detallada y accionable",
+          "impact": "alto" | "medio" | "bajo",
+          "metric": "Metrica relevante si aplica (ej: '68% de consultas')"
+        }
+      ]
     }
   ]
 }""")
@@ -218,47 +197,5 @@ def evaluate_conversations_batch(conversations_json: str, pipeline_config_json: 
         return json.dumps({"error": str(e)})
 
 
-@tool
-def aggregate_sentiment(sentiment_data_json: str) -> str:
-    """Aggregate individual sentiment results into a summary.
-    Returns JSON with distribution counts and top friction points."""
-    try:
-        data = json.loads(sentiment_data_json)
-        conversations = data.get("conversations", [])
-
-        distribution = {"satisfied": 0, "neutral": 0, "frustrated": 0}
-        friction_counts: dict[str, int] = {}
-
-        for conv in conversations:
-            sentiment = conv.get("sentiment", "neutral")
-            if sentiment in distribution:
-                distribution[sentiment] += 1
-
-            for fp in conv.get("friction_points", []):
-                friction_counts[fp] = friction_counts.get(fp, 0) + 1
-
-        total = sum(distribution.values())
-        top_friction = sorted(
-            friction_counts.items(), key=lambda x: x[1], reverse=True
-        )[:5]
-
-        result = {
-            "total_analyzed": total,
-            "distribution": distribution,
-            "top_friction_points": [
-                {
-                    "description": desc,
-                    "occurrences": count,
-                    "percentage": round((count / total * 100) if total > 0 else 0, 2),
-                }
-                for desc, count in top_friction
-            ],
-        }
-        return json.dumps(result)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
 # Tool lists per agent
 FUNNEL_TOOLS = [evaluate_conversations_batch]
-SENTIMENT_TOOLS = [aggregate_sentiment]

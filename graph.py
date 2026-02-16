@@ -15,7 +15,6 @@ from agents import (
     get_llm,
     PIPELINE_IDENTIFIER_PROMPT,
     FUNNEL_ANALYZER_PROMPT,
-    SENTIMENT_ANALYZER_PROMPT,
     VALUE_SUGGESTIONS_PROMPT,
 )
 from data_processor import (
@@ -26,8 +25,6 @@ from data_processor import (
 from models import (
     Pipeline,
     EvaluationResults,
-    SentimentSummary,
-    FrictionPoint,
     ValueSuggestion,
     AbandonmentReason,
     ConversationDetail,
@@ -137,45 +134,21 @@ def funnel_analyzer_node(state: AnalysisState) -> dict:
     }
 
 
-def sentiment_analyzer_node(state: AnalysisState) -> dict:
-    """Analyze sentiment and friction points for each conversation."""
-    llm = get_llm()
-    conversations = state.get("conversations_json", "[]")
-
-    prompt = HumanMessage(content=(
-        "Analiza el sentimiento de cada una de las siguientes conversaciones.\n\n"
-        f"CONVERSACIONES:\n{conversations}\n\n"
-        "Para cada conversacion determina el sentimiento del CLIENTE "
-        "(satisfied/neutral/frustrated) y los puntos de friccion."
-    ))
-
-    response = llm.invoke([SENTIMENT_ANALYZER_PROMPT, prompt])
-    result = _extract_json(response.content)
-
-    return {
-        "messages": [AIMessage(content="Analisis de sentimiento completado.")],
-        "sentiment_results": json.dumps(result, ensure_ascii=False),
-        "current_agent": "sentiment_analyzer",
-    }
-
-
 def value_suggestions_node(state: AnalysisState) -> dict:
-    """Generate value suggestions based on all analysis results."""
+    """Generate value suggestions per pipeline based on funnel results."""
     llm = get_llm()
 
     funnel = state.get("funnel_results", "{}")
-    sentiment = state.get("sentiment_results", "{}")
     pipelines_json = state.get("pipelines_config", "[]")
 
     prompt = HumanMessage(content=(
         "Basado en los siguientes resultados de analisis, genera sugerencias "
-        "de valor accionables.\n\n"
+        "de valor accionables PARA CADA PIPELINE.\n\n"
         f"CONFIGURACION DE PIPELINES:\n{pipelines_json}\n\n"
         f"RESULTADOS DEL FUNNEL:\n{funnel}\n\n"
-        f"RESULTADOS DE SENTIMIENTO:\n{sentiment}\n\n"
         "Genera sugerencias en las 4 categorias: autogestion, conversion, "
         "cuello_botella, quick_win. Se especifico y basa tus sugerencias "
-        "en los datos reales."
+        "en los datos reales. Agrupa por pipeline_id."
     ))
 
     response = llm.invoke([VALUE_SUGGESTIONS_PROMPT, prompt])
@@ -204,17 +177,15 @@ def build_auto_detect_graph() -> StateGraph:
 def build_analysis_graph() -> StateGraph:
     """
     Main analysis graph:
-    START → funnel_analyzer → sentiment_analyzer → value_suggestions → END
+    START → funnel_analyzer → value_suggestions → END
     """
     graph = StateGraph(AnalysisState)
 
     graph.add_node("funnel_analyzer", funnel_analyzer_node)
-    graph.add_node("sentiment_analyzer", sentiment_analyzer_node)
     graph.add_node("value_suggestions", value_suggestions_node)
 
     graph.add_edge(START, "funnel_analyzer")
-    graph.add_edge("funnel_analyzer", "sentiment_analyzer")
-    graph.add_edge("sentiment_analyzer", "value_suggestions")
+    graph.add_edge("funnel_analyzer", "value_suggestions")
     graph.add_edge("value_suggestions", END)
 
     return graph.compile()
@@ -254,8 +225,6 @@ class SalesPipelineAnalyzer:
             "pipelines_config": "[]",
             "conversations_json": conversations_text,
             "funnel_results": "{}",
-            "sentiment_results": "{}",
-            "friction_results": "{}",
             "abandonment_results": "{}",
             "suggestions": "{}",
             "current_agent": "",
@@ -277,8 +246,8 @@ class SalesPipelineAnalyzer:
         """
         Run the full analysis pipeline:
         1. Rule-based funnel aggregation
-        2. LLM-based sentiment, friction, abandonment analysis
-        3. LLM-based value suggestions
+        2. LLM-based funnel enrichment + abandonment analysis
+        3. LLM-based value suggestions per pipeline
         """
         import time
         start_time = time.time()
@@ -303,8 +272,6 @@ class SalesPipelineAnalyzer:
             "funnel_results": json.dumps(
                 [pr.to_dict() for pr in pipeline_results], ensure_ascii=False
             ),
-            "sentiment_results": "{}",
-            "friction_results": "{}",
             "abandonment_results": "{}",
             "suggestions": "{}",
             "current_agent": "",
@@ -320,7 +287,6 @@ class SalesPipelineAnalyzer:
 
         # Parse LLM results and enrich pipeline_results
         funnel_llm = _extract_json(result.get("funnel_results", "{}"))
-        sentiment_data = _extract_json(result.get("sentiment_results", "{}"))
         suggestions_data = _extract_json(result.get("suggestions", "{}"))
 
         # Enrich pipeline results with LLM abandonment reasons
@@ -361,59 +327,45 @@ class SalesPipelineAnalyzer:
                                         (llm_s / total * 100) if total > 0 else 0, 1
                                     )
 
-        # Build sentiment summary
-        sentiment_convs = sentiment_data.get("conversations", [])
-        satisfied = sum(1 for c in sentiment_convs if c.get("sentiment") == "satisfied")
-        neutral = sum(1 for c in sentiment_convs if c.get("sentiment") == "neutral")
-        frustrated = sum(1 for c in sentiment_convs if c.get("sentiment") == "frustrated")
+        # Distribute suggestions per pipeline
+        llm_pipelines_suggestions = suggestions_data.get("pipelines", [])
+        for pr in pipeline_results:
+            pr_suggestions = []
+            for llm_ps in llm_pipelines_suggestions:
+                if llm_ps.get("pipeline_id") == pr.pipeline_id:
+                    for s in llm_ps.get("suggestions", []):
+                        pr_suggestions.append(
+                            ValueSuggestion(
+                                category=s.get("category", "quick_win"),
+                                title=s.get("title", ""),
+                                description=s.get("description", ""),
+                                impact=s.get("impact", "medio"),
+                                metric=s.get("metric"),
+                            )
+                        )
+            pr.suggestions = pr_suggestions
 
-        # Aggregate friction points
-        friction_counts: dict[str, int] = {}
-        for conv in sentiment_convs:
-            for fp in conv.get("friction_points", []):
-                friction_counts[fp] = friction_counts.get(fp, 0) + 1
-
-        total_analyzed = len(sentiment_convs) or len(df)
-        top_friction = sorted(friction_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-
-        sentiment_summary = SentimentSummary(
-            total_analyzed=total_analyzed,
-            satisfied=satisfied,
-            neutral=neutral,
-            frustrated=frustrated,
-            top_friction_points=[
-                FrictionPoint(
-                    description=desc,
-                    occurrences=count,
-                    percentage=round((count / total_analyzed * 100) if total_analyzed > 0 else 0, 2),
-                )
-                for desc, count in top_friction
-            ],
-        )
-
-        # Build value suggestions
-        raw_suggestions = suggestions_data.get("suggestions", [])
-        value_suggestions = [
-            ValueSuggestion(
-                category=s.get("category", "quick_win"),
-                title=s.get("title", ""),
-                description=s.get("description", ""),
-                impact=s.get("impact", "medio"),
-                metric=s.get("metric"),
-            )
-            for s in raw_suggestions
-        ]
+        # If LLM didn't group by pipeline, try flat suggestions list as fallback
+        if not any(pr.suggestions for pr in pipeline_results):
+            flat_suggestions = suggestions_data.get("suggestions", [])
+            if flat_suggestions:
+                # Distribute evenly across pipelines
+                for s in flat_suggestions:
+                    suggestion = ValueSuggestion(
+                        category=s.get("category", "quick_win"),
+                        title=s.get("title", ""),
+                        description=s.get("description", ""),
+                        impact=s.get("impact", "medio"),
+                        metric=s.get("metric"),
+                    )
+                    # Add to first pipeline as fallback
+                    if pipeline_results:
+                        pipeline_results[0].suggestions.append(suggestion)
 
         # Build per-conversation details (for CSV export)
         from data_processor import evaluate_conversation_against_pipeline
         conversation_details = []
         for idx, row in df.iterrows():
-            conv_sentiment = ""
-            conv_friction = []
-            if idx < len(sentiment_convs):
-                conv_sentiment = sentiment_convs[idx].get("sentiment", "")
-                conv_friction = sentiment_convs[idx].get("friction_points", [])
-
             pipe_results = {}
             for pipeline in pipelines:
                 eval_r = evaluate_conversation_against_pipeline(row, pipeline)
@@ -431,8 +383,6 @@ class SalesPipelineAnalyzer:
             conversation_details.append(
                 ConversationDetail(
                     index=int(idx),
-                    sentiment=conv_sentiment,
-                    friction_points=conv_friction,
                     pipeline_results=pipe_results,
                 )
             )
@@ -445,8 +395,6 @@ class SalesPipelineAnalyzer:
         return EvaluationResults(
             total_conversations_analyzed=len(df),
             pipelines=pipeline_results,
-            sentiment_summary=sentiment_summary,
-            suggestions=value_suggestions,
             conversation_details=conversation_details,
             processing_time_seconds=round(elapsed, 2),
         )

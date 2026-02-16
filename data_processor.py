@@ -19,7 +19,7 @@ from models import (
 )
 
 
-REQUIRED_COLUMNS = ["historial", "tipificaciones", "etapas"]
+REQUIRED_COLUMNS = ["historial", "tipificaciones"]
 
 # Aliases for flexible column matching (lowercase)
 COLUMN_ALIASES: dict[str, list[str]] = {
@@ -105,7 +105,9 @@ def validate_sample_diversity(df: pd.DataFrame, min_groups: int = 2) -> dict:
             if t:
                 unique_tipificaciones.add(t)
 
-    unique_etapas = set(df["etapas"].dropna().unique()) - {""}
+    unique_etapas = set()
+    if "etapas" in df.columns:
+        unique_etapas = set(df["etapas"].dropna().unique()) - {""}
 
     is_diverse = len(unique_tipificaciones) >= min_groups or len(unique_etapas) >= min_groups
     return {
@@ -123,9 +125,10 @@ def get_sample_for_auto_detect(df: pd.DataFrame, max_samples: int = 20) -> pd.Da
     if len(df) <= max_samples:
         return df
 
-    # Stratified sampling by etapas to ensure diversity
-    etapas_col = df["etapas"].fillna("sin_etapa")
-    groups = df.groupby(etapas_col)
+    # Stratified sampling by tipificaciones (or etapas if available)
+    group_col = "etapas" if "etapas" in df.columns else "tipificaciones"
+    group_values = df[group_col].fillna("sin_grupo")
+    groups = df.groupby(group_values)
 
     samples_per_group = max(1, max_samples // len(groups))
     sampled = groups.apply(
@@ -149,13 +152,15 @@ def conversations_to_prompt_text(df: pd.DataFrame) -> str:
     for i, row in df.iterrows():
         historial = row.get("historial", "")[:1500]  # Truncate long conversations
         tipificaciones = row.get("tipificaciones", "")
-        etapas = row.get("etapas", "")
-        lines.append(
-            f"--- Conversacion {i + 1} ---\n"
-            f"Tipificaciones: {tipificaciones}\n"
-            f"Etapa: {etapas}\n"
-            f"Historial:\n{historial}\n"
-        )
+        etapas = row.get("etapas", "") if "etapas" in df.columns else ""
+        parts = [
+            f"--- Conversacion {i + 1} ---",
+            f"Tipificaciones: {tipificaciones}",
+        ]
+        if etapas:
+            parts.append(f"Etapa: {etapas}")
+        parts.append(f"Historial:\n{historial}")
+        lines.append("\n".join(parts) + "\n")
     return "\n".join(lines)
 
 
@@ -176,22 +181,24 @@ def evaluate_conversation_against_pipeline(
     Returns dict with objective_id -> {"success": bool, "matched_keywords": list}
     """
     historial = row.get("historial", "").lower()
-    etapa_csv = row.get("etapas", "").strip()
+    etapa_csv = row.get("etapas", "").strip() if "etapas" in row.index else ""
     tipificaciones = row.get("tipificaciones", "").lower()
 
     stages = pipeline.get_stages()
-    conv_stage_idx = get_stage_index(etapa_csv, pipeline.pipeline_type)
+    conv_stage_idx = get_stage_index(etapa_csv, pipeline.pipeline_type) if etapa_csv else -1
 
     results = {}
     for obj in pipeline.objectives:
         obj_stage_idx = get_stage_index(obj.stage, pipeline.pipeline_type)
 
-        # Determine success based on stage progression
+        # Determine success based on stage progression (if etapas available)
         if conv_stage_idx >= 0 and obj_stage_idx >= 0:
             success = conv_stage_idx >= obj_stage_idx
-        else:
-            # Fallback: check if stage names match or keywords appear
+        elif etapa_csv:
             success = etapa_csv.lower() == obj.stage.lower()
+        else:
+            # No etapas column: rely on keywords and tipificaciones
+            success = False
 
         # Check for keyword matches
         matched_keywords = []
@@ -275,14 +282,16 @@ def aggregate_funnel_results(
         )
 
     # Determine abandoned conversations (didn't reach last stage)
+    has_etapas = "etapas" in df.columns
     last_stage = pipeline.get_stages()[-1] if pipeline.get_stages() else ""
     last_stage_idx = get_stage_index(last_stage, pipeline.pipeline_type)
     abandoned = 0
-    for _, row in df.iterrows():
-        etapa = row.get("etapas", "").strip()
-        idx = get_stage_index(etapa, pipeline.pipeline_type)
-        if idx < last_stage_idx:
-            abandoned += 1
+    if has_etapas:
+        for _, row in df.iterrows():
+            etapa = row.get("etapas", "").strip()
+            idx = get_stage_index(etapa, pipeline.pipeline_type)
+            if idx < last_stage_idx:
+                abandoned += 1
     completed = total - abandoned
 
     abandonment = AbandonmentAnalysis(

@@ -143,10 +143,12 @@ with tab_config:
                 sample_df = load_csv(sample_file)
                 diversity = validate_sample_diversity(sample_df)
 
-                col_d1, col_d2, col_d3 = st.columns(3)
-                col_d1.metric("Conversaciones", diversity["total_conversations"])
-                col_d2.metric("Tipificaciones unicas", diversity["tipificaciones_count"])
-                col_d3.metric("Etapas unicas", diversity["etapas_count"])
+                has_etapas = diversity["etapas_count"] > 0
+                cols = st.columns(3 if has_etapas else 2)
+                cols[0].metric("Conversaciones", diversity["total_conversations"])
+                cols[1].metric("Tipificaciones unicas", diversity["tipificaciones_count"])
+                if has_etapas:
+                    cols[2].metric("Etapas unicas", diversity["etapas_count"])
 
                 if not diversity["is_diverse"]:
                     st.warning(

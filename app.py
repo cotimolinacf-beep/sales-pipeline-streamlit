@@ -646,12 +646,13 @@ elif step == 4:
                 return pd.DataFrame()
             export = df_source.copy()
             # Add sentiment
-            if results.conversation_details:
+            conv_details = getattr(results, "conversation_details", []) or []
+            if conv_details:
                 sentiments = []
                 frictions = []
                 for i in range(len(export)):
-                    if i < len(results.conversation_details):
-                        cd = results.conversation_details[i]
+                    if i < len(conv_details):
+                        cd = conv_details[i]
                         sentiments.append(cd.sentiment)
                         frictions.append("; ".join(cd.friction_points) if cd.friction_points else "")
                     else:
@@ -666,8 +667,8 @@ elif step == 4:
                     obj_cols: dict[str, list] = {}
                     kw_col = []
                     for i in range(len(export)):
-                        if i < len(results.conversation_details):
-                            cd = results.conversation_details[i]
+                        if i < len(conv_details):
+                            cd = conv_details[i]
                             pr_data = cd.pipeline_results.get(p_name, {})
                             objs = pr_data.get("objectives", {})
                             for obj_name, success in objs.items():

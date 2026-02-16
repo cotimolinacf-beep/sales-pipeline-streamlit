@@ -152,12 +152,57 @@ for i, label in enumerate(step_labels):
 
 st.divider()
 
+# ══════════════════════════════════════════════
+# INTRO (shown only on step 1 before CSV upload)
+# ══════════════════════════════════════════════
+
+if step == 1:
+    st.markdown(
+        """
+        <div style="
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border-radius: 12px;
+            padding: 2rem 2.5rem;
+            margin-bottom: 1.5rem;
+            color: white;
+        ">
+            <h2 style="margin:0 0 0.5rem 0; color:white;">Bienvenido al Sales Pipeline Analyzer</h2>
+            <p style="margin:0 0 1rem 0; font-size:1.1rem; opacity:0.9;">
+                Evalua la experiencia conversacional de tus bots y agentes de atencion al cliente
+                usando inteligencia artificial.
+            </p>
+            <div style="display:flex; gap:2rem; flex-wrap:wrap;">
+                <div>
+                    <span style="font-size:1.5rem;">📂</span><br>
+                    <b>1. Carga tu CSV</b><br>
+                    <span style="opacity:0.8; font-size:0.9rem;">Conversaciones con historial y tipificaciones</span>
+                </div>
+                <div>
+                    <span style="font-size:1.5rem;">⚙️</span><br>
+                    <b>2. Configura pipelines</b><br>
+                    <span style="opacity:0.8; font-size:0.9rem;">Auto-deteccion con IA o configuracion manual</span>
+                </div>
+                <div>
+                    <span style="font-size:1.5rem;">🤖</span><br>
+                    <b>3. Analisis con IA</b><br>
+                    <span style="opacity:0.8; font-size:0.9rem;">Funnel, sentimiento, friccion y abandono</span>
+                </div>
+                <div>
+                    <span style="font-size:1.5rem;">📊</span><br>
+                    <b>4. Reporte completo</b><br>
+                    <span style="opacity:0.8; font-size:0.9rem;">KPIs, graficos y sugerencias accionables</span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ══════════════════════════════════════════════
 # STEP 1: CARGAR CSV
 # ══════════════════════════════════════════════
 
-if step == 1:
     st.header("1. Cargar conversaciones")
     st.markdown("Sube el CSV con las conversaciones a analizar. "
                 "Columnas requeridas: **historial** y **tipificaciones**. "

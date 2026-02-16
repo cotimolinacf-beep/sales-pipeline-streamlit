@@ -30,6 +30,7 @@ from models import (
     FrictionPoint,
     ValueSuggestion,
     AbandonmentReason,
+    ConversationDetail,
 )
 
 
@@ -403,6 +404,39 @@ class SalesPipelineAnalyzer:
             for s in raw_suggestions
         ]
 
+        # Build per-conversation details (for CSV export)
+        from data_processor import evaluate_conversation_against_pipeline
+        conversation_details = []
+        for idx, row in df.iterrows():
+            conv_sentiment = ""
+            conv_friction = []
+            if idx < len(sentiment_convs):
+                conv_sentiment = sentiment_convs[idx].get("sentiment", "")
+                conv_friction = sentiment_convs[idx].get("friction_points", [])
+
+            pipe_results = {}
+            for pipeline in pipelines:
+                eval_r = evaluate_conversation_against_pipeline(row, pipeline)
+                obj_map = {}
+                all_kws = []
+                for obj in pipeline.objectives:
+                    r = eval_r.get(obj.id, {})
+                    obj_map[obj.name] = r.get("success", False)
+                    all_kws.extend(r.get("matched_keywords", []))
+                pipe_results[pipeline.name] = {
+                    "objectives": obj_map,
+                    "keywords": all_kws,
+                }
+
+            conversation_details.append(
+                ConversationDetail(
+                    index=int(idx),
+                    sentiment=conv_sentiment,
+                    friction_points=conv_friction,
+                    pipeline_results=pipe_results,
+                )
+            )
+
         if progress_callback:
             progress_callback(0.95, "Finalizando...")
 
@@ -413,5 +447,6 @@ class SalesPipelineAnalyzer:
             pipelines=pipeline_results,
             sentiment_summary=sentiment_summary,
             suggestions=value_suggestions,
+            conversation_details=conversation_details,
             processing_time_seconds=round(elapsed, 2),
         )

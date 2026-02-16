@@ -255,9 +255,20 @@ class ValueSuggestion:
 
 
 @dataclass
+class ConversationDetail:
+    """Per-conversation analysis detail (for CSV export)."""
+    index: int
+    sentiment: str = ""  # satisfied / neutral / frustrated
+    friction_points: list[str] = field(default_factory=list)
+    pipeline_results: dict = field(default_factory=dict)
+    # pipeline_results: {pipeline_name: {"objectives": {obj_name: bool}, "keywords": [str]}}
+
+
+@dataclass
 class EvaluationResults:
     total_conversations_analyzed: int
     pipelines: list[PipelineResult] = field(default_factory=list)
     sentiment_summary: Optional[SentimentSummary] = None
     suggestions: list[ValueSuggestion] = field(default_factory=list)
+    conversation_details: list[ConversationDetail] = field(default_factory=list)
     processing_time_seconds: Optional[float] = None

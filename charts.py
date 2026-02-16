@@ -90,6 +90,57 @@ def funnel_chart(data: EvaluationResults) -> go.Figure:
     return fig
 
 
+def pipeline_funnel_chart(pipeline: PipelineResult) -> go.Figure:
+    """Funnel chart for a single pipeline's objectives ordered by stage."""
+    goals = pipeline.funnel
+    if not goals:
+        fig = go.Figure()
+        fig.update_layout(title=f"Embudo - {pipeline.pipeline_name}")
+        return fig
+
+    stages_order = get_stages_for_type(pipeline.pipeline_type)
+    sorted_goals = sorted(
+        goals,
+        key=lambda g: stages_order.index(g.stage) if g.stage in stages_order else 999,
+    )
+
+    labels = [f"{g.stage}: {g.objective_name}" for g in sorted_goals]
+    values = [g.success_count for g in sorted_goals]
+    totals = [g.success_count + g.failure_count for g in sorted_goals]
+    colors = []
+    hover_texts = []
+    for g in sorted_goals:
+        rate = g.success_rate
+        colors.append(GREEN if rate >= 60 else YELLOW if rate >= 30 else RED)
+        hover_texts.append(
+            f"<b>{g.objective_name}</b><br>"
+            f"Etapa: {g.stage}<br>"
+            f"Exitosos: {g.success_count:,}<br>"
+            f"Fallidos: {g.failure_count:,}<br>"
+            f"Tasa: {rate:.1f}%"
+        )
+
+    fig = go.Figure(
+        go.Funnel(
+            y=labels,
+            x=values,
+            textinfo="value+percent initial",
+            marker={"color": colors, "line": {"width": 1, "color": "white"}},
+            hovertext=hover_texts,
+            hoverinfo="text",
+            connector={"line": {"color": PRIMARY_LIGHT, "width": 1}},
+        )
+    )
+    fig.update_layout(
+        title={"text": f"Embudo de conversion", "font": {"size": 16}},
+        height=max(250, len(sorted_goals) * 60 + 80),
+        margin=dict(l=20, r=20, t=50, b=20),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
 def pipeline_goals_chart(pipeline: PipelineResult) -> go.Figure:
     """Horizontal bar chart showing success/failure per objective in a pipeline."""
     goals = pipeline.funnel

@@ -6,7 +6,8 @@ import os
 import json
 from typing import Annotated
 from typing_extensions import TypedDict
-from langchain_core.messages import SystemMessage, HumanMessage, add_messages
+from langchain_core.messages import SystemMessage, HumanMessage
+from langgraph.graph.message import add_messages
 from langchain_core.tools import tool
 
 

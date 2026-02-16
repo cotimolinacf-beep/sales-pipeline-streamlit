@@ -179,17 +179,141 @@ with tab_config:
 
         # Show auto-detected results for editing
         if st.session_state.auto_detect_results:
-            st.subheader("Pipelines sugeridos (edita antes de confirmar)")
-            for i, p_data in enumerate(st.session_state.auto_detect_results):
-                with st.expander(f"Pipeline: {p_data.get('name', f'Pipeline {i+1}')}", expanded=True):
-                    st.json(p_data)
+            st.subheader("Pipelines sugeridos")
+            st.caption("Revisa, edita o elimina antes de confirmar")
 
-            if st.button("Confirmar y cargar pipelines", type="primary"):
-                loaded = [Pipeline.from_dict(p) for p in st.session_state.auto_detect_results]
-                st.session_state.pipelines = loaded
-                st.session_state.auto_detect_results = None
-                st.success(f"{len(loaded)} pipeline(s) cargados a la configuracion")
+            pipelines_to_remove = []
+            for i, p_data in enumerate(st.session_state.auto_detect_results):
+                p_type = p_data.get("type", "ventas")
+                type_icon = "🛒" if p_type == "ventas" else "🎧"
+                type_label = "Ventas" if p_type == "ventas" else "Servicio"
+                objectives = p_data.get("objectives", [])
+
+                with st.container(border=True):
+                    # Pipeline header
+                    col_ph1, col_ph2, col_ph3 = st.columns([3, 1, 0.5])
+                    with col_ph1:
+                        p_data["name"] = st.text_input(
+                            "Nombre del pipeline",
+                            value=p_data.get("name", f"Pipeline {i+1}"),
+                            key=f"ad_pname_{i}",
+                        )
+                    with col_ph2:
+                        new_type = st.selectbox(
+                            "Tipo",
+                            PIPELINE_TYPES,
+                            index=PIPELINE_TYPES.index(p_type) if p_type in PIPELINE_TYPES else 0,
+                            format_func=lambda x: "🛒 Ventas" if x == "ventas" else "🎧 Servicio",
+                            key=f"ad_ptype_{i}",
+                        )
+                        p_data["type"] = new_type
+                    with col_ph3:
+                        st.write("")  # spacing
+                        if st.button("🗑", key=f"ad_del_pipe_{i}", help="Eliminar pipeline"):
+                            pipelines_to_remove.append(i)
+
+                    p_data["description"] = st.text_input(
+                        "Descripcion",
+                        value=p_data.get("description", ""),
+                        key=f"ad_pdesc_{i}",
+                    )
+
+                    # Objectives
+                    if objectives:
+                        st.markdown("##### Objetivos")
+                        objs_to_remove = []
+                        stages = get_stages_for_type(new_type)
+
+                        for j, obj in enumerate(objectives):
+                            with st.container(border=True):
+                                col_o1, col_o2, col_o3 = st.columns([3, 2, 0.5])
+                                with col_o1:
+                                    obj["name"] = st.text_input(
+                                        "Objetivo",
+                                        value=obj.get("name", ""),
+                                        key=f"ad_oname_{i}_{j}",
+                                    )
+                                with col_o2:
+                                    current_stage = obj.get("stage", stages[0])
+                                    stage_idx = stages.index(current_stage) if current_stage in stages else 0
+                                    obj["stage"] = st.selectbox(
+                                        "Etapa",
+                                        stages,
+                                        index=stage_idx,
+                                        key=f"ad_ostage_{i}_{j}",
+                                    )
+                                with col_o3:
+                                    st.write("")
+                                    if st.button("🗑", key=f"ad_del_obj_{i}_{j}", help="Eliminar objetivo"):
+                                        objs_to_remove.append(j)
+
+                                col_s1, col_s2 = st.columns(2)
+                                with col_s1:
+                                    obj["success"] = st.text_input(
+                                        "✅ Criterio de exito",
+                                        value=obj.get("success", ""),
+                                        key=f"ad_osucc_{i}_{j}",
+                                    )
+                                with col_s2:
+                                    obj["failure"] = st.text_input(
+                                        "❌ Criterio de fallo",
+                                        value=obj.get("failure", ""),
+                                        key=f"ad_ofail_{i}_{j}",
+                                    )
+
+                                col_k1, col_k2 = st.columns([3, 1])
+                                with col_k1:
+                                    # Show keywords as editable text
+                                    fd_list = obj.get("field_distribution", [])
+                                    kw_str = ", ".join(
+                                        kw for fd in fd_list for kw in fd.get("keywords", [])
+                                    )
+                                    new_kw = st.text_input(
+                                        "Keywords (separados por coma)",
+                                        value=kw_str,
+                                        key=f"ad_okw_{i}_{j}",
+                                    )
+                                    # Update field_distribution
+                                    if new_kw.strip():
+                                        kws = [k.strip() for k in new_kw.split(",") if k.strip()]
+                                        obj["field_distribution"] = [{"name": "keywords", "keywords": kws}]
+                                    else:
+                                        obj["field_distribution"] = []
+                                with col_k2:
+                                    is_conv = obj.get("isConversionIndicator", False)
+                                    obj["isConversionIndicator"] = st.checkbox(
+                                        "⭐ Conversion",
+                                        value=is_conv,
+                                        key=f"ad_oconv_{i}_{j}",
+                                        help="Indicador principal de conversion",
+                                    )
+
+                        # Remove marked objectives
+                        for j in sorted(objs_to_remove, reverse=True):
+                            objectives.pop(j)
+                            st.rerun()
+
+                    else:
+                        st.caption("No se detectaron objetivos para este pipeline.")
+
+            # Remove marked pipelines
+            for i in sorted(pipelines_to_remove, reverse=True):
+                st.session_state.auto_detect_results.pop(i)
                 st.rerun()
+
+            # Action buttons
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("Confirmar y cargar pipelines", type="primary", use_container_width=True):
+                    loaded = [Pipeline.from_dict(p) for p in st.session_state.auto_detect_results]
+                    st.session_state.pipelines = loaded
+                    st.session_state.auto_detect_results = None
+                    st.success(f"{len(loaded)} pipeline(s) cargados a la configuracion")
+                    st.rerun()
+            with col_btn2:
+                if st.button("Descartar sugerencias", use_container_width=True):
+                    st.session_state.auto_detect_results = None
+                    st.rerun()
 
     # ── Manual mode ──
     if config_mode == "Manual":

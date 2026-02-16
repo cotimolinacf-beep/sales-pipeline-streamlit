@@ -98,24 +98,39 @@ def load_csv(file) -> pd.DataFrame:
 
 def validate_sample_diversity(df: pd.DataFrame, min_groups: int = 2) -> dict:
     """Check that a conversation sample has diverse tipificaciones/etapas."""
+    # Count unique tipificaciones (split by comma, semicolon, pipe, or treat whole value)
     unique_tipificaciones = set()
+    raw_unique_tipificaciones = set()
     for val in df["tipificaciones"].dropna().unique():
-        for t in val.split(","):
-            t = t.strip()
-            if t:
-                unique_tipificaciones.add(t)
+        val = str(val).strip()
+        if not val:
+            continue
+        raw_unique_tipificaciones.add(val)
+        # Try splitting by common separators
+        for sep in [",", ";", "|"]:
+            if sep in val:
+                for t in val.split(sep):
+                    t = t.strip()
+                    if t:
+                        unique_tipificaciones.add(t)
+                break
+        else:
+            unique_tipificaciones.add(val)
 
     unique_etapas = set()
     if "etapas" in df.columns:
         unique_etapas = set(df["etapas"].dropna().unique()) - {""}
 
-    is_diverse = len(unique_tipificaciones) >= min_groups or len(unique_etapas) >= min_groups
+    # Use the larger count: split values or raw unique values
+    tipif_count = max(len(unique_tipificaciones), len(raw_unique_tipificaciones))
+    is_diverse = tipif_count >= min_groups or len(unique_etapas) >= min_groups
+
     return {
         "is_diverse": is_diverse,
         "unique_tipificaciones": sorted(unique_tipificaciones),
         "unique_etapas": sorted(unique_etapas),
         "total_conversations": len(df),
-        "tipificaciones_count": len(unique_tipificaciones),
+        "tipificaciones_count": tipif_count,
         "etapas_count": len(unique_etapas),
     }
 

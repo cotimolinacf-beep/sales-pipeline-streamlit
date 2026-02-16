@@ -21,15 +21,77 @@ from models import (
 
 REQUIRED_COLUMNS = ["historial", "tipificaciones", "etapas"]
 
+# Aliases for flexible column matching (lowercase)
+COLUMN_ALIASES: dict[str, list[str]] = {
+    "historial": [
+        "historial", "historial_bot", "historial_de_mensajes_en_bot",
+        "historial_mensajes", "historial_de_bot", "conversacion",
+        "mensajes", "chat", "transcript", "messages",
+    ],
+    "tipificaciones": [
+        "tipificaciones", "tipificacion", "tipificación", "tipificacón",
+        "tipo", "tipos", "clasificacion", "clasificaciones",
+        "tags", "etiquetas", "categorias", "categoria",
+    ],
+    "etapas": [
+        "etapas", "etapa", "stage", "stages", "fase", "fases",
+        "estado", "estados", "step", "steps", "nivel",
+    ],
+}
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Match CSV columns to expected names using aliases."""
+    col_lower_map = {c.lower().strip(): c for c in df.columns}
+
+    for target, aliases in COLUMN_ALIASES.items():
+        if target in df.columns:
+            continue  # Already has the exact name
+        matched = False
+        for alias in aliases:
+            if alias in col_lower_map:
+                df = df.rename(columns={col_lower_map[alias]: target})
+                matched = True
+                break
+        if not matched:
+            # Try partial/substring match as last resort
+            for col_lower, col_original in col_lower_map.items():
+                if alias_matches_partial(col_lower, target):
+                    df = df.rename(columns={col_original: target})
+                    matched = True
+                    break
+    return df
+
+
+def alias_matches_partial(col_name: str, target: str) -> bool:
+    """Check if a column name partially matches a target."""
+    # "historial_de_mensajes_en_bot" contains "historial"
+    # "tipificacion_agente" contains "tipificacion"
+    key_fragments = {
+        "historial": ["historial", "mensajes_bot", "chat_bot", "transcript"],
+        "tipificaciones": ["tipific", "clasific", "categori"],
+        "etapas": ["etapa", "stage", "fase"],
+    }
+    for fragment in key_fragments.get(target, []):
+        if fragment in col_name:
+            return True
+    return False
+
 
 def load_csv(file) -> pd.DataFrame:
-    """Load and validate a CSV file. Returns DataFrame."""
+    """Load CSV, auto-match columns by aliases, and validate."""
     df = pd.read_csv(file, dtype=str).fillna("")
+    df = _normalize_columns(df)
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
+        available = ", ".join(df.columns.tolist())
         raise ValueError(
-            f"Columnas faltantes en el CSV: {', '.join(missing)}. "
-            f"Se requieren: {', '.join(REQUIRED_COLUMNS)}"
+            f"No se encontraron columnas equivalentes a: {', '.join(missing)}.\n"
+            f"Columnas disponibles en el CSV: {available}\n\n"
+            f"Nombres aceptados:\n"
+            f"  historial: historial, historial_de_mensajes_en_bot, conversacion, mensajes, chat...\n"
+            f"  tipificaciones: tipificacion, tipificaciones, clasificacion, tags, etiquetas...\n"
+            f"  etapas: etapa, etapas, stage, fase, estado..."
         )
     return df
 

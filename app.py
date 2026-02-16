@@ -1,5 +1,6 @@
 """
-Streamlit UI for the Sales Pipeline Analyzer.
+Sales Pipeline Analyzer - Streamlit UI
+Step-by-step wizard flow.
 """
 
 import streamlit as st
@@ -13,8 +14,6 @@ from models import (
     FieldDistribution,
     EvaluationResults,
     PIPELINE_TYPES,
-    SALES_STAGES,
-    SERVICE_STAGES,
     get_stages_for_type,
 )
 from data_processor import (
@@ -35,10 +34,6 @@ from charts import (
 
 load_dotenv()
 
-# ──────────────────────────────────────────────
-# Page config
-# ──────────────────────────────────────────────
-
 st.set_page_config(
     page_title="Sales Pipeline Analyzer",
     page_icon="📊",
@@ -50,46 +45,55 @@ st.set_page_config(
 # Session state defaults
 # ──────────────────────────────────────────────
 
-if "pipelines" not in st.session_state:
-    st.session_state.pipelines = []
-if "evaluation_results" not in st.session_state:
-    st.session_state.evaluation_results = None
-if "uploaded_df" not in st.session_state:
-    st.session_state.uploaded_df = None
-if "auto_detect_results" not in st.session_state:
-    st.session_state.auto_detect_results = None
+DEFAULTS = {
+    "current_step": 1,
+    "pipelines": [],
+    "evaluation_results": None,
+    "uploaded_df": None,
+    "auto_detect_results": None,
+}
+for key, val in DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 
 # ──────────────────────────────────────────────
-# Sidebar: LLM Configuration
+# Sidebar
 # ──────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Configuracion LLM")
+    st.header("📊 Sales Pipeline Analyzer")
+    st.caption("Evaluacion de experiencia conversacional")
+
+    st.divider()
+
+    # LLM Config
+    st.subheader("Proveedor LLM")
     provider = st.selectbox(
         "Proveedor",
         ["Google Gemini", "OpenAI", "Anthropic"],
         index=0,
+        label_visibility="collapsed",
     )
     api_key = st.text_input("API Key", type="password")
 
     st.divider()
 
-    # Pipeline config import/export
-    st.subheader("Config de Pipelines")
+    # Pipeline import/export
+    st.subheader("Configuracion")
     uploaded_config = st.file_uploader(
-        "Cargar config JSON", type=["json"], key="config_upload"
+        "Importar pipelines (JSON)", type=["json"], key="config_upload"
     )
     if uploaded_config:
         try:
             config_data = json.loads(uploaded_config.read().decode("utf-8"))
-            loaded_pipelines = [
-                Pipeline.from_dict(p) for p in config_data.get("pipelines", [])
-            ]
-            st.session_state.pipelines = loaded_pipelines
-            st.success(f"{len(loaded_pipelines)} pipeline(s) cargados")
+            loaded = [Pipeline.from_dict(p) for p in config_data.get("pipelines", [])]
+            st.session_state.pipelines = loaded
+            if st.session_state.current_step < 2:
+                st.session_state.current_step = 2
+            st.success(f"{len(loaded)} pipeline(s) importados")
         except Exception as e:
-            st.error(f"Error al cargar config: {e}")
+            st.error(f"Error: {e}")
 
     if st.session_state.pipelines:
         config_json = json.dumps(
@@ -97,579 +101,622 @@ with st.sidebar:
             ensure_ascii=False,
             indent=2,
         )
-        st.download_button(
-            "Descargar config JSON",
-            config_json,
-            "config.json",
-            "application/json",
-        )
+        st.download_button("Exportar pipelines JSON", config_json, "config.json", "application/json")
+
+    st.divider()
+
+    # Navigation
+    st.subheader("Progreso")
+    steps = {
+        1: "Cargar CSV",
+        2: "Configurar Pipeline",
+        3: "Ejecutar Analisis",
+        4: "Reporte",
+    }
+    for num, label in steps.items():
+        if num < st.session_state.current_step:
+            st.markdown(f"~~{num}. {label}~~  ✅")
+        elif num == st.session_state.current_step:
+            st.markdown(f"**{num}. {label}** ◀")
+        else:
+            st.markdown(f"{num}. {label}")
+
+    st.divider()
+    if st.button("Reiniciar todo", use_container_width=True):
+        for key, val in DEFAULTS.items():
+            st.session_state[key] = val
+        st.rerun()
 
 
 # ──────────────────────────────────────────────
-# Main content
+# Step indicator
 # ──────────────────────────────────────────────
 
-st.title("📊 Sales Pipeline Analyzer")
-st.caption("Evaluacion de experiencia conversacional")
+step = st.session_state.current_step
+step_labels = ["Cargar CSV", "Configurar Pipeline", "Ejecutar Analisis", "Reporte"]
 
-tab_config, tab_dashboard = st.tabs(["⚙️ Configuracion", "📈 Dashboard"])
+cols_step = st.columns(4)
+for i, label in enumerate(step_labels):
+    num = i + 1
+    with cols_step[i]:
+        if num < step:
+            st.success(f"**{num}.** {label} ✅", icon="✅")
+        elif num == step:
+            st.info(f"**{num}.** {label}", icon="👉")
+        else:
+            st.container(border=True).markdown(
+                f"<div style='text-align:center;color:#94a3b8;padding:8px'>"
+                f"<b>{num}.</b> {label}</div>",
+                unsafe_allow_html=True,
+            )
+
+st.divider()
 
 
 # ══════════════════════════════════════════════
-# TAB 1: CONFIGURACION
+# STEP 1: CARGAR CSV
 # ══════════════════════════════════════════════
 
-with tab_config:
+if step == 1:
+    st.header("1. Cargar conversaciones")
+    st.markdown("Sube el CSV con las conversaciones a analizar. "
+                "Columnas requeridas: **historial** y **tipificaciones**. "
+                "La columna **etapas** es opcional.")
+
+    csv_file = st.file_uploader(
+        "Selecciona tu archivo CSV",
+        type=["csv"],
+        key="main_csv",
+    )
+
+    if csv_file:
+        try:
+            df = load_csv(csv_file)
+            st.session_state.uploaded_df = df
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Conversaciones", f"{len(df):,}")
+            col2.metric("Columnas detectadas", len(df.columns))
+
+            diversity = validate_sample_diversity(df)
+            col3.metric("Tipificaciones unicas", diversity["tipificaciones_count"])
+
+            with st.expander("Vista previa de datos", expanded=True):
+                st.dataframe(df.head(8), use_container_width=True)
+
+            # Show detected columns
+            st.caption(f"Columnas en el CSV: {', '.join(df.columns.tolist())}")
+
+            st.divider()
+            if st.button("Siguiente →", type="primary", use_container_width=True):
+                st.session_state.current_step = 2
+                st.rerun()
+
+        except ValueError as e:
+            st.error(str(e))
+    else:
+        st.info("Arrastra o selecciona un archivo CSV para comenzar.")
+
+
+# ══════════════════════════════════════════════
+# STEP 2: CONFIGURAR PIPELINE
+# ══════════════════════════════════════════════
+
+elif step == 2:
+    st.header("2. Configurar Pipelines")
+
     config_mode = st.radio(
-        "Modo de configuracion",
-        ["Manual", "Auto-detectar desde CSV"],
+        "Como quieres configurar los pipelines?",
+        ["Auto-detectar desde conversaciones", "Configuracion manual"],
         horizontal=True,
     )
 
-    # ── Auto-detect mode ──
-    if config_mode == "Auto-detectar desde CSV":
-        st.subheader("Auto-detectar pipelines")
-        st.info(
-            "Sube una muestra de conversaciones y el sistema sugerira "
-            "pipelines con objetivos, etapas y keywords automaticamente."
-        )
+    # ── AUTO-DETECT ──
+    if config_mode == "Auto-detectar desde conversaciones":
+        if st.session_state.uploaded_df is None:
+            st.warning("Primero carga un CSV en el paso anterior.")
+        else:
+            df = st.session_state.uploaded_df
+            st.markdown(f"Se usara una muestra de hasta **20 conversaciones** "
+                        f"de las {len(df):,} cargadas para identificar pipelines.")
 
-        sample_file = st.file_uploader(
-            "CSV de muestra", type=["csv"], key="sample_csv"
-        )
-
-        if sample_file:
-            try:
-                sample_df = load_csv(sample_file)
-                diversity = validate_sample_diversity(sample_df)
-
-                has_etapas = diversity["etapas_count"] > 0
-                cols = st.columns(3 if has_etapas else 2)
-                cols[0].metric("Conversaciones", diversity["total_conversations"])
-                cols[1].metric("Tipificaciones unicas", diversity["tipificaciones_count"])
-                if has_etapas:
-                    cols[2].metric("Etapas unicas", diversity["etapas_count"])
-
-                if not diversity["is_diverse"]:
-                    st.warning(
-                        "La muestra tiene poca diversidad. Intenta incluir conversaciones "
-                        "de diferentes grupos/tipificaciones para mejores resultados."
-                    )
-
-                with st.expander("Preview de datos", expanded=False):
-                    st.dataframe(sample_df.head(10), use_container_width=True)
-
-                if st.button("Detectar pipelines", type="primary"):
+            if not st.session_state.auto_detect_results:
+                if st.button("Detectar pipelines con IA", type="primary", use_container_width=True):
                     if not api_key:
                         st.error("Configura tu API Key en el sidebar.")
                     else:
-                        with st.spinner("Analizando conversaciones..."):
+                        with st.spinner("Analizando conversaciones con IA..."):
                             analyzer = SalesPipelineAnalyzer(provider, api_key)
-                            sample = get_sample_for_auto_detect(sample_df)
+                            sample = get_sample_for_auto_detect(df)
                             sample_text = conversations_to_prompt_text(sample)
                             suggested = analyzer.auto_detect_pipelines(sample_text)
 
                         if suggested:
                             st.session_state.auto_detect_results = suggested
-                            st.success(f"Se detectaron {len(suggested)} pipeline(s)")
+                            st.rerun()
                         else:
-                            st.error("No se pudieron detectar pipelines. Intenta con una muestra mas diversa.")
-            except ValueError as e:
-                st.error(str(e))
+                            st.error("No se pudieron detectar pipelines.")
 
-        # Show auto-detected results for editing
+        # Editable suggested pipelines
         if st.session_state.auto_detect_results:
-            st.subheader("Pipelines sugeridos")
-            st.caption("Revisa, edita o elimina antes de confirmar")
+            st.subheader("Pipelines detectados")
+            st.caption("Edita nombre, objetivos, etapas y keywords antes de confirmar.")
 
             pipelines_to_remove = []
             for i, p_data in enumerate(st.session_state.auto_detect_results):
                 p_type = p_data.get("type", "ventas")
-                type_icon = "🛒" if p_type == "ventas" else "🎧"
-                type_label = "Ventas" if p_type == "ventas" else "Servicio"
                 objectives = p_data.get("objectives", [])
+                type_icon = "🛒" if p_type == "ventas" else "🎧"
 
                 with st.container(border=True):
-                    # Pipeline header
-                    col_ph1, col_ph2, col_ph3 = st.columns([3, 1, 0.5])
-                    with col_ph1:
+                    # Header
+                    col_h1, col_h2, col_h3 = st.columns([3, 1.5, 0.5])
+                    with col_h1:
                         p_data["name"] = st.text_input(
-                            "Nombre del pipeline",
-                            value=p_data.get("name", f"Pipeline {i+1}"),
-                            key=f"ad_pname_{i}",
+                            "Pipeline", value=p_data.get("name", ""),
+                            key=f"ad_pn_{i}",
                         )
-                    with col_ph2:
+                    with col_h2:
                         new_type = st.selectbox(
-                            "Tipo",
-                            PIPELINE_TYPES,
+                            "Tipo", PIPELINE_TYPES,
                             index=PIPELINE_TYPES.index(p_type) if p_type in PIPELINE_TYPES else 0,
                             format_func=lambda x: "🛒 Ventas" if x == "ventas" else "🎧 Servicio",
-                            key=f"ad_ptype_{i}",
+                            key=f"ad_pt_{i}",
                         )
                         p_data["type"] = new_type
-                    with col_ph3:
-                        st.write("")  # spacing
-                        if st.button("🗑", key=f"ad_del_pipe_{i}", help="Eliminar pipeline"):
+                    with col_h3:
+                        st.write("")
+                        if st.button("🗑", key=f"ad_dp_{i}", help="Eliminar pipeline"):
                             pipelines_to_remove.append(i)
 
                     p_data["description"] = st.text_input(
-                        "Descripcion",
-                        value=p_data.get("description", ""),
-                        key=f"ad_pdesc_{i}",
+                        "Descripcion", value=p_data.get("description", ""),
+                        key=f"ad_pd_{i}",
                     )
 
                     # Objectives
                     if objectives:
-                        st.markdown("##### Objetivos")
                         objs_to_remove = []
                         stages = get_stages_for_type(new_type)
 
                         for j, obj in enumerate(objectives):
                             with st.container(border=True):
-                                col_o1, col_o2, col_o3 = st.columns([3, 2, 0.5])
-                                with col_o1:
+                                c1, c2, c3, c4 = st.columns([2.5, 1.5, 1, 0.4])
+                                with c1:
                                     obj["name"] = st.text_input(
-                                        "Objetivo",
-                                        value=obj.get("name", ""),
-                                        key=f"ad_oname_{i}_{j}",
+                                        "Objetivo", value=obj.get("name", ""),
+                                        key=f"ad_on_{i}_{j}",
                                     )
-                                with col_o2:
-                                    current_stage = obj.get("stage", stages[0])
-                                    stage_idx = stages.index(current_stage) if current_stage in stages else 0
+                                with c2:
+                                    cur = obj.get("stage", stages[0])
+                                    idx = stages.index(cur) if cur in stages else 0
                                     obj["stage"] = st.selectbox(
-                                        "Etapa",
-                                        stages,
-                                        index=stage_idx,
-                                        key=f"ad_ostage_{i}_{j}",
+                                        "Etapa", stages, index=idx, key=f"ad_os_{i}_{j}",
                                     )
-                                with col_o3:
+                                with c3:
+                                    obj["isConversionIndicator"] = st.checkbox(
+                                        "⭐ Conversion", value=obj.get("isConversionIndicator", False),
+                                        key=f"ad_oc_{i}_{j}",
+                                    )
+                                with c4:
                                     st.write("")
-                                    if st.button("🗑", key=f"ad_del_obj_{i}_{j}", help="Eliminar objetivo"):
+                                    if st.button("✕", key=f"ad_do_{i}_{j}"):
                                         objs_to_remove.append(j)
 
-                                col_s1, col_s2 = st.columns(2)
-                                with col_s1:
+                                sc1, sc2 = st.columns(2)
+                                with sc1:
                                     obj["success"] = st.text_input(
-                                        "✅ Criterio de exito",
-                                        value=obj.get("success", ""),
-                                        key=f"ad_osucc_{i}_{j}",
+                                        "Criterio exito", value=obj.get("success", ""),
+                                        key=f"ad_osu_{i}_{j}",
                                     )
-                                with col_s2:
+                                with sc2:
                                     obj["failure"] = st.text_input(
-                                        "❌ Criterio de fallo",
-                                        value=obj.get("failure", ""),
-                                        key=f"ad_ofail_{i}_{j}",
+                                        "Criterio fallo", value=obj.get("failure", ""),
+                                        key=f"ad_of_{i}_{j}",
                                     )
 
-                                col_k1, col_k2 = st.columns([3, 1])
-                                with col_k1:
-                                    # Show keywords as editable text
-                                    fd_list = obj.get("field_distribution", [])
-                                    kw_str = ", ".join(
-                                        kw for fd in fd_list for kw in fd.get("keywords", [])
-                                    )
-                                    new_kw = st.text_input(
-                                        "Keywords (separados por coma)",
-                                        value=kw_str,
-                                        key=f"ad_okw_{i}_{j}",
-                                    )
-                                    # Update field_distribution
-                                    if new_kw.strip():
-                                        kws = [k.strip() for k in new_kw.split(",") if k.strip()]
-                                        obj["field_distribution"] = [{"name": "keywords", "keywords": kws}]
-                                    else:
-                                        obj["field_distribution"] = []
-                                with col_k2:
-                                    is_conv = obj.get("isConversionIndicator", False)
-                                    obj["isConversionIndicator"] = st.checkbox(
-                                        "⭐ Conversion",
-                                        value=is_conv,
-                                        key=f"ad_oconv_{i}_{j}",
-                                        help="Indicador principal de conversion",
-                                    )
+                                fd_list = obj.get("field_distribution", [])
+                                kw_str = ", ".join(kw for fd in fd_list for kw in fd.get("keywords", []))
+                                new_kw = st.text_input(
+                                    "Keywords (coma separados)", value=kw_str,
+                                    key=f"ad_ok_{i}_{j}",
+                                )
+                                if new_kw.strip():
+                                    kws = [k.strip() for k in new_kw.split(",") if k.strip()]
+                                    obj["field_distribution"] = [{"name": "keywords", "keywords": kws}]
+                                else:
+                                    obj["field_distribution"] = []
 
-                        # Remove marked objectives
                         for j in sorted(objs_to_remove, reverse=True):
                             objectives.pop(j)
                             st.rerun()
 
-                    else:
-                        st.caption("No se detectaron objetivos para este pipeline.")
-
-            # Remove marked pipelines
             for i in sorted(pipelines_to_remove, reverse=True):
                 st.session_state.auto_detect_results.pop(i)
                 st.rerun()
 
-            # Action buttons
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                if st.button("Confirmar y cargar pipelines", type="primary", use_container_width=True):
+            # Actions
+            st.divider()
+            c_btn1, c_btn2, c_btn3 = st.columns([2, 1, 1])
+            with c_btn1:
+                if st.button("Confirmar pipelines →", type="primary", use_container_width=True):
                     loaded = [Pipeline.from_dict(p) for p in st.session_state.auto_detect_results]
                     st.session_state.pipelines = loaded
                     st.session_state.auto_detect_results = None
-                    st.success(f"{len(loaded)} pipeline(s) cargados a la configuracion")
+                    st.session_state.current_step = 3
                     st.rerun()
-            with col_btn2:
-                if st.button("Descartar sugerencias", use_container_width=True):
+            with c_btn2:
+                if st.button("Descartar", use_container_width=True):
                     st.session_state.auto_detect_results = None
                     st.rerun()
+            with c_btn3:
+                if st.button("← Volver", use_container_width=True):
+                    st.session_state.current_step = 1
+                    st.rerun()
 
-    # ── Manual mode ──
-    if config_mode == "Manual":
-        st.subheader("Pipelines configurados")
-
-        # Show existing pipelines
-        if not st.session_state.pipelines:
-            st.info("No hay pipelines configurados. Crea uno nuevo o carga un JSON desde el sidebar.")
-
-        for idx, pipeline in enumerate(st.session_state.pipelines):
-            with st.expander(
-                f"{'🛒' if pipeline.pipeline_type == 'ventas' else '🎧'} "
-                f"{pipeline.name} ({len(pipeline.objectives)} objetivos)",
-                expanded=False,
-            ):
-                col_p1, col_p2 = st.columns([3, 1])
-                with col_p1:
-                    st.text(f"Tipo: {pipeline.pipeline_type} | {pipeline.description}")
-                with col_p2:
-                    if st.button("Eliminar", key=f"del_pipeline_{idx}"):
-                        st.session_state.pipelines.pop(idx)
-                        st.rerun()
-
-                # Objectives list
-                st.markdown("**Objetivos:**")
-                for oi, obj in enumerate(pipeline.objectives):
-                    indicator = " ⭐" if obj.is_conversion_indicator else ""
-                    col_o1, col_o2, col_o3, col_o4 = st.columns([3, 1, 1, 1])
-                    col_o1.text(f"{oi+1}. {obj.name}{indicator} [{obj.stage}]")
-                    col_o2.text(f"✅ {obj.success[:30]}")
-                    col_o3.text(f"❌ {obj.failure[:30]}")
-                    if col_o4.button("🗑", key=f"del_obj_{idx}_{oi}"):
-                        pipeline.objectives.pop(oi)
-                        # Reassign conversion indicator if needed
-                        if obj.is_conversion_indicator and pipeline.objectives:
-                            pipeline.objectives[0].is_conversion_indicator = True
-                        st.rerun()
-
-                # Add objective form
-                st.markdown("---")
-                st.markdown("**Agregar objetivo:**")
-                stages = get_stages_for_type(pipeline.pipeline_type)
-
-                with st.form(key=f"add_obj_form_{idx}"):
-                    obj_name = st.text_input("Nombre", max_chars=30, key=f"obj_name_{idx}")
-                    obj_stage = st.selectbox("Etapa", stages, key=f"obj_stage_{idx}")
-                    obj_success = st.text_input("Criterio de exito", key=f"obj_success_{idx}")
-                    obj_failure = st.text_input("Criterio de fallo", key=f"obj_failure_{idx}")
-                    obj_is_conv = st.checkbox(
-                        "Indicador de conversion",
-                        key=f"obj_conv_{idx}",
-                        value=len(pipeline.objectives) == 0,
-                    )
-                    obj_keywords = st.text_input(
-                        "Keywords (separados por coma)",
-                        key=f"obj_kw_{idx}",
-                        help="Ejemplo: Yaris, Tacoma, Hilux",
-                    )
-
-                    if st.form_submit_button("Agregar objetivo"):
-                        if obj_name and obj_success and obj_failure:
-                            # Parse keywords
-                            fd_list = []
-                            if obj_keywords.strip():
-                                kws = [k.strip() for k in obj_keywords.split(",") if k.strip()]
-                                if kws:
-                                    fd_list.append(FieldDistribution(name="keywords", keywords=kws))
-
-                            new_obj = Objective(
-                                name=obj_name,
-                                stage=obj_stage,
-                                success=obj_success,
-                                failure=obj_failure,
-                                is_conversion_indicator=obj_is_conv,
-                                field_distribution=fd_list,
-                            )
-
-                            # Enforce single conversion indicator
-                            if obj_is_conv:
-                                for o in pipeline.objectives:
-                                    o.is_conversion_indicator = False
-
-                            pipeline.objectives.append(new_obj)
-
-                            # If first objective and not marked, mark it
-                            if len(pipeline.objectives) == 1:
-                                pipeline.objectives[0].is_conversion_indicator = True
-
-                            st.rerun()
-                        else:
-                            st.warning("Completa todos los campos obligatorios.")
-
-        # ── Create new pipeline ──
-        st.divider()
-        st.subheader("Nuevo pipeline")
-
-        with st.form(key="new_pipeline_form"):
-            p_name = st.text_input("Nombre del pipeline", max_chars=30)
-            p_desc = st.text_area("Descripcion", max_chars=200)
-            p_type = st.selectbox("Tipo", PIPELINE_TYPES, format_func=lambda x: "Ventas" if x == "ventas" else "Servicio")
-
-            if st.form_submit_button("Crear pipeline", type="primary"):
-                if p_name:
-                    existing_names = [p.name for p in st.session_state.pipelines]
-                    if p_name in existing_names:
-                        st.error("Ya existe un pipeline con ese nombre.")
-                    else:
-                        new_pipeline = Pipeline(
-                            name=p_name,
-                            description=p_desc,
-                            pipeline_type=p_type,
-                        )
-                        st.session_state.pipelines.append(new_pipeline)
-                        st.rerun()
-                else:
-                    st.warning("Ingresa un nombre para el pipeline.")
-
-
-# ══════════════════════════════════════════════
-# TAB 2: DASHBOARD
-# ══════════════════════════════════════════════
-
-with tab_dashboard:
-    if not st.session_state.pipelines:
-        st.warning("Configura al menos un pipeline en la pestaña de Configuracion antes de analizar.")
+    # ── MANUAL MODE ──
     else:
-        st.subheader("Cargar conversaciones")
-        csv_file = st.file_uploader(
-            "Sube tu CSV con conversaciones",
-            type=["csv"],
-            key="analysis_csv",
-            help="Columnas requeridas: historial, tipificaciones, etapas",
-        )
-
-        if csv_file:
-            try:
-                df = load_csv(csv_file)
-                st.session_state.uploaded_df = df
-
-                col_u1, col_u2, col_u3 = st.columns(3)
-                col_u1.metric("Conversaciones", len(df))
-                col_u2.metric("Columnas", len(df.columns))
-                col_u3.metric(
-                    "Pipelines configurados", len(st.session_state.pipelines)
-                )
-
-                with st.expander("Preview de datos", expanded=False):
-                    st.dataframe(df.head(5), use_container_width=True)
-
-            except ValueError as e:
-                st.error(str(e))
-                st.session_state.uploaded_df = None
-
-        # Run analysis button
-        if st.session_state.uploaded_df is not None:
-            if st.button("Ejecutar analisis", type="primary", use_container_width=True):
-                if not api_key:
-                    st.error("Configura tu API Key en el sidebar.")
-                else:
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    def update_progress(value, text):
-                        progress_bar.progress(value)
-                        status_text.text(text)
-
-                    try:
-                        analyzer = SalesPipelineAnalyzer(provider, api_key)
-                        results = analyzer.run_analysis(
-                            st.session_state.uploaded_df,
-                            st.session_state.pipelines,
-                            progress_callback=update_progress,
-                        )
-                        st.session_state.evaluation_results = results
-                        progress_bar.progress(1.0)
-                        status_text.text("Analisis completado!")
-                    except Exception as e:
-                        st.error(f"Error durante el analisis: {e}")
-                        progress_bar.empty()
-                        status_text.empty()
-
-        # ── Show results ──
-        results: EvaluationResults = st.session_state.evaluation_results
-        if results:
-            st.divider()
-
-            # ── KPI Cards ──
-            st.subheader("Metricas principales")
-            kpi_cols = st.columns(4)
-
-            kpi_cols[0].metric(
-                "Conversaciones analizadas",
-                f"{results.total_conversations_analyzed:,}",
-            )
-
-            # Show conversion rate per pipeline
-            kpi_idx = 1
-            for pr in results.pipelines:
-                conv_goal = next(
-                    (g for g in pr.funnel if g.is_conversion_indicator), None
-                )
-                if conv_goal and kpi_idx < 4:
-                    rate = (
-                        (conv_goal.success_count / pr.total_conversations * 100)
-                        if pr.total_conversations > 0
-                        else 0
-                    )
-                    kpi_cols[kpi_idx].metric(
-                        f"{pr.pipeline_name}",
-                        f"{rate:.1f}%",
-                        help=f"{conv_goal.objective_name}: {conv_goal.success_count}/{pr.total_conversations}",
-                    )
-                    kpi_idx += 1
-
-            if results.processing_time_seconds:
-                kpi_cols[min(kpi_idx, 3)].metric(
-                    "Tiempo de procesamiento",
-                    f"{results.processing_time_seconds:.1f}s",
-                )
-
-            # ── Global Funnel ──
-            st.divider()
-            st.plotly_chart(funnel_chart(results), use_container_width=True)
-
-            # ── Pipeline Details ──
-            st.divider()
-            st.subheader("Detalle por pipeline")
-
-            for pr in results.pipelines:
+        # Existing pipelines
+        if st.session_state.pipelines:
+            for idx, pipeline in enumerate(st.session_state.pipelines):
+                type_icon = "🛒" if pipeline.pipeline_type == "ventas" else "🎧"
                 with st.expander(
-                    f"{'🛒' if pr.pipeline_type == 'ventas' else '🎧'} "
-                    f"{pr.pipeline_name} ({pr.total_conversations} conversaciones)",
+                    f"{type_icon} {pipeline.name} — {len(pipeline.objectives)} objetivo(s)",
                     expanded=True,
                 ):
-                    # Summary metrics
-                    col_pr1, col_pr2, col_pr3 = st.columns(3)
-                    conv_goal = next(
-                        (g for g in pr.funnel if g.is_conversion_indicator), None
-                    )
-                    conv_rate = conv_goal.success_rate if conv_goal else 0
-                    avg_rate = (
-                        sum(g.success_rate for g in pr.funnel) / len(pr.funnel)
-                        if pr.funnel
-                        else 0
-                    )
-                    col_pr1.metric("Tasa de conversion", f"{conv_rate:.1f}%")
-                    col_pr2.metric("Promedio de exito", f"{avg_rate:.1f}%")
-                    if pr.abandonment_analysis:
-                        col_pr3.metric(
-                            "Tasa de abandono",
-                            f"{pr.abandonment_analysis.abandonment_rate:.1f}%",
-                        )
+                    col_p1, col_p2 = st.columns([4, 1])
+                    with col_p1:
+                        st.caption(f"{pipeline.pipeline_type.capitalize()} · {pipeline.description}")
+                    with col_p2:
+                        if st.button("Eliminar pipeline", key=f"dp_{idx}"):
+                            st.session_state.pipelines.pop(idx)
+                            st.rerun()
 
-                    # Goals bar chart
-                    st.plotly_chart(
-                        pipeline_goals_chart(pr), use_container_width=True
-                    )
-
-                    # Keyword distributions
-                    for goal in pr.funnel:
-                        kw_fig = keyword_distribution_chart(goal)
-                        if kw_fig:
-                            st.plotly_chart(kw_fig, use_container_width=True)
-
-                    # Abandonment chart
-                    ab_fig = abandonment_chart(pr)
-                    if ab_fig:
-                        st.plotly_chart(ab_fig, use_container_width=True)
-
-            # ── Sentiment Analysis ──
-            if results.sentiment_summary:
-                st.divider()
-                st.subheader("Analisis de sentimiento")
-
-                ss = results.sentiment_summary
-                col_s1, col_s2 = st.columns(2)
-
-                with col_s1:
-                    st.plotly_chart(
-                        sentiment_pie_chart(ss.satisfied, ss.neutral, ss.frustrated),
-                        use_container_width=True,
-                    )
-
-                with col_s2:
-                    st.plotly_chart(
-                        sentiment_bar_chart(ss.satisfied, ss.neutral, ss.frustrated),
-                        use_container_width=True,
-                    )
-
-                    # Sentiment metrics
-                    total = ss.satisfied + ss.neutral + ss.frustrated
-                    if total > 0:
-                        col_sm1, col_sm2, col_sm3 = st.columns(3)
-                        col_sm1.metric(
-                            "😊 Satisfechos",
-                            ss.satisfied,
-                            f"{ss.satisfied / total * 100:.1f}%",
-                        )
-                        col_sm2.metric(
-                            "😐 Neutrales",
-                            ss.neutral,
-                            f"{ss.neutral / total * 100:.1f}%",
-                        )
-                        col_sm3.metric(
-                            "😤 Frustrados",
-                            ss.frustrated,
-                            f"{ss.frustrated / total * 100:.1f}%",
-                            delta_color="inverse",
-                        )
-
-                # Friction points
-                if ss.top_friction_points:
-                    st.subheader("Principales puntos de friccion")
-                    for i, fp in enumerate(ss.top_friction_points):
-                        with st.container():
-                            col_fp1, col_fp2, col_fp3 = st.columns([4, 1, 1])
-                            col_fp1.markdown(f"**{i+1}.** {fp.description}")
-                            col_fp2.metric("Ocurrencias", fp.occurrences)
-                            col_fp3.metric("% conversaciones", f"{fp.percentage:.1f}%")
-                            st.progress(fp.percentage / 100)
-
-            # ── Value Suggestions ──
-            if results.suggestions:
-                st.divider()
-                st.subheader("Sugerencias de valor")
-
-                category_map = {
-                    "autogestion": ("🤖 Autogestion", "info"),
-                    "conversion": ("📈 Conversion", "success"),
-                    "cuello_botella": ("⚠️ Cuellos de botella", "warning"),
-                    "quick_win": ("⚡ Quick Wins", "info"),
-                }
-
-                # Group by category
-                grouped: dict[str, list] = {}
-                for s in results.suggestions:
-                    cat = s.category
-                    if cat not in grouped:
-                        grouped[cat] = []
-                    grouped[cat].append(s)
-
-                for cat, suggestions in grouped.items():
-                    label, style = category_map.get(cat, (cat, "info"))
-                    st.markdown(f"### {label}")
-
-                    for s in suggestions:
-                        impact_badge = {
-                            "alto": "🔴",
-                            "medio": "🟡",
-                            "bajo": "🟢",
-                        }.get(s.impact, "⚪")
+                    # Objectives table
+                    for oi, obj in enumerate(pipeline.objectives):
+                        star = "⭐ " if obj.is_conversion_indicator else ""
+                        kw_text = ""
+                        if obj.field_distribution:
+                            kws = [kw for fd in obj.field_distribution for kw in fd.keywords]
+                            if kws:
+                                kw_text = f" · Keywords: {', '.join(kws[:5])}"
 
                         with st.container(border=True):
-                            col_sg1, col_sg2 = st.columns([4, 1])
-                            col_sg1.markdown(f"**{s.title}**")
-                            col_sg2.markdown(f"Impacto: {impact_badge} {s.impact}")
-                            st.markdown(s.description)
-                            if s.metric:
-                                st.caption(f"📊 {s.metric}")
+                            co1, co2, co3 = st.columns([3, 2, 0.5])
+                            co1.markdown(f"**{star}{obj.name}**")
+                            co2.caption(f"📍 {obj.stage}{kw_text}")
+                            with co3:
+                                if st.button("✕", key=f"do_{idx}_{oi}"):
+                                    pipeline.objectives.pop(oi)
+                                    if obj.is_conversion_indicator and pipeline.objectives:
+                                        pipeline.objectives[0].is_conversion_indicator = True
+                                    st.rerun()
+
+                            cc1, cc2 = st.columns(2)
+                            cc1.caption(f"✅ {obj.success}")
+                            cc2.caption(f"❌ {obj.failure}")
+
+                    # Add objective
+                    st.markdown("---")
+                    with st.form(key=f"add_obj_{idx}"):
+                        st.markdown("**Agregar objetivo**")
+                        stages = get_stages_for_type(pipeline.pipeline_type)
+                        fc1, fc2 = st.columns(2)
+                        obj_name = fc1.text_input("Nombre", max_chars=30, key=f"on_{idx}")
+                        obj_stage = fc2.selectbox("Etapa", stages, key=f"os_{idx}")
+
+                        fc3, fc4 = st.columns(2)
+                        obj_success = fc3.text_input("Criterio exito", key=f"osu_{idx}")
+                        obj_failure = fc4.text_input("Criterio fallo", key=f"of_{idx}")
+
+                        fc5, fc6 = st.columns([3, 1])
+                        obj_kw = fc5.text_input("Keywords (coma)", key=f"ok_{idx}")
+                        obj_conv = fc6.checkbox(
+                            "⭐ Conversion", key=f"oc_{idx}",
+                            value=len(pipeline.objectives) == 0,
+                        )
+
+                        if st.form_submit_button("Agregar", use_container_width=True):
+                            if obj_name and obj_success and obj_failure:
+                                fd = []
+                                if obj_kw.strip():
+                                    kws = [k.strip() for k in obj_kw.split(",") if k.strip()]
+                                    if kws:
+                                        fd.append(FieldDistribution(name="keywords", keywords=kws))
+                                new_obj = Objective(
+                                    name=obj_name, stage=obj_stage,
+                                    success=obj_success, failure=obj_failure,
+                                    is_conversion_indicator=obj_conv, field_distribution=fd,
+                                )
+                                if obj_conv:
+                                    for o in pipeline.objectives:
+                                        o.is_conversion_indicator = False
+                                pipeline.objectives.append(new_obj)
+                                if len(pipeline.objectives) == 1:
+                                    pipeline.objectives[0].is_conversion_indicator = True
+                                st.rerun()
+                            else:
+                                st.warning("Completa nombre, criterio exito y criterio fallo.")
+        else:
+            st.info("Crea tu primer pipeline o importa un JSON desde el sidebar.")
+
+        # New pipeline form
+        st.divider()
+        with st.form(key="new_pipeline"):
+            st.markdown("**Nuevo pipeline**")
+            np1, np2 = st.columns([3, 1])
+            p_name = np1.text_input("Nombre", max_chars=30)
+            p_type = np2.selectbox(
+                "Tipo", PIPELINE_TYPES,
+                format_func=lambda x: "🛒 Ventas" if x == "ventas" else "🎧 Servicio",
+            )
+            p_desc = st.text_input("Descripcion", max_chars=200)
+
+            if st.form_submit_button("Crear pipeline", type="primary", use_container_width=True):
+                if p_name:
+                    existing = [p.name for p in st.session_state.pipelines]
+                    if p_name in existing:
+                        st.error("Ya existe un pipeline con ese nombre.")
+                    else:
+                        st.session_state.pipelines.append(
+                            Pipeline(name=p_name, description=p_desc, pipeline_type=p_type)
+                        )
+                        st.rerun()
+                else:
+                    st.warning("Ingresa un nombre.")
+
+        # Navigation
+        st.divider()
+        nav1, nav2 = st.columns(2)
+        with nav1:
+            if st.button("← Volver al CSV", use_container_width=True):
+                st.session_state.current_step = 1
+                st.rerun()
+        with nav2:
+            has_objectives = any(len(p.objectives) > 0 for p in st.session_state.pipelines)
+            if st.session_state.pipelines and has_objectives:
+                if st.button("Siguiente → Ejecutar analisis", type="primary", use_container_width=True):
+                    st.session_state.current_step = 3
+                    st.rerun()
+            else:
+                st.button(
+                    "Siguiente → (agrega al menos 1 pipeline con objetivos)",
+                    disabled=True, use_container_width=True,
+                )
+
+
+# ══════════════════════════════════════════════
+# STEP 3: EJECUTAR ANALISIS
+# ══════════════════════════════════════════════
+
+elif step == 3:
+    st.header("3. Ejecutar Analisis")
+
+    df = st.session_state.uploaded_df
+    pipelines = st.session_state.pipelines
+
+    if df is None:
+        st.warning("No hay CSV cargado.")
+        if st.button("← Ir al paso 1"):
+            st.session_state.current_step = 1
+            st.rerun()
+    elif not pipelines:
+        st.warning("No hay pipelines configurados.")
+        if st.button("← Ir al paso 2"):
+            st.session_state.current_step = 2
+            st.rerun()
+    else:
+        # Summary
+        st.markdown("### Resumen del analisis")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Conversaciones", f"{len(df):,}")
+        c2.metric("Pipelines", len(pipelines))
+        total_obj = sum(len(p.objectives) for p in pipelines)
+        c3.metric("Objetivos totales", total_obj)
+
+        # Pipeline summary cards
+        for p in pipelines:
+            type_icon = "🛒" if p.pipeline_type == "ventas" else "🎧"
+            conv_obj = p.get_conversion_indicator()
+            conv_name = f" · ⭐ {conv_obj.name}" if conv_obj else ""
+            with st.container(border=True):
+                st.markdown(f"**{type_icon} {p.name}** — {len(p.objectives)} objetivo(s){conv_name}")
+                stages_used = [o.stage for o in p.objectives]
+                st.caption(f"Etapas: {' → '.join(stages_used)}")
+
+        st.divider()
+
+        # LLM status
+        if not api_key:
+            st.error("Configura tu API Key en el sidebar antes de ejecutar.")
+        else:
+            st.caption(f"Proveedor: **{provider}** · API Key configurada ✅")
+
+            if st.button("Ejecutar analisis", type="primary", use_container_width=True, disabled=not api_key):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                def update_progress(value, text):
+                    progress_bar.progress(value)
+                    status_text.text(text)
+
+                try:
+                    analyzer = SalesPipelineAnalyzer(provider, api_key)
+                    results = analyzer.run_analysis(df, pipelines, progress_callback=update_progress)
+                    st.session_state.evaluation_results = results
+                    progress_bar.progress(1.0)
+                    status_text.text("Analisis completado!")
+                    st.session_state.current_step = 4
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    progress_bar.empty()
+                    status_text.empty()
+
+        # Navigation
+        st.divider()
+        if st.button("← Volver a pipelines", use_container_width=True):
+            st.session_state.current_step = 2
+            st.rerun()
+
+
+# ══════════════════════════════════════════════
+# STEP 4: REPORTE
+# ══════════════════════════════════════════════
+
+elif step == 4:
+    results: EvaluationResults = st.session_state.evaluation_results
+
+    if not results:
+        st.warning("No hay resultados. Ejecuta el analisis primero.")
+        if st.button("← Ir al paso 3"):
+            st.session_state.current_step = 3
+            st.rerun()
+    else:
+        st.header("4. Reporte de Analisis")
+
+        # ── KPIs ──
+        kpi_cols = st.columns(4)
+        kpi_cols[0].metric("Conversaciones", f"{results.total_conversations_analyzed:,}")
+
+        kpi_idx = 1
+        for pr in results.pipelines:
+            conv_goal = next((g for g in pr.funnel if g.is_conversion_indicator), None)
+            if conv_goal and kpi_idx < 3:
+                rate = (conv_goal.success_count / pr.total_conversations * 100) if pr.total_conversations > 0 else 0
+                kpi_cols[kpi_idx].metric(
+                    pr.pipeline_name, f"{rate:.1f}%",
+                    help=f"{conv_goal.objective_name}: {conv_goal.success_count}/{pr.total_conversations}",
+                )
+                kpi_idx += 1
+
+        if results.processing_time_seconds:
+            kpi_cols[3].metric("Tiempo", f"{results.processing_time_seconds:.1f}s")
+
+        # ── Funnel ──
+        st.divider()
+        st.plotly_chart(funnel_chart(results), use_container_width=True)
+
+        # ── Pipeline Details ──
+        st.divider()
+        st.subheader("Detalle por Pipeline")
+
+        for pr in results.pipelines:
+            type_icon = "🛒" if pr.pipeline_type == "ventas" else "🎧"
+            with st.expander(
+                f"{type_icon} {pr.pipeline_name} — {pr.total_conversations} conversaciones",
+                expanded=True,
+            ):
+                mc1, mc2, mc3 = st.columns(3)
+                conv_goal = next((g for g in pr.funnel if g.is_conversion_indicator), None)
+                conv_rate = conv_goal.success_rate if conv_goal else 0
+                avg_rate = sum(g.success_rate for g in pr.funnel) / len(pr.funnel) if pr.funnel else 0
+
+                mc1.metric("Tasa conversion", f"{conv_rate:.1f}%")
+                mc2.metric("Promedio exito", f"{avg_rate:.1f}%")
+                if pr.abandonment_analysis:
+                    mc3.metric("Abandono", f"{pr.abandonment_analysis.abandonment_rate:.1f}%")
+
+                st.plotly_chart(pipeline_goals_chart(pr), use_container_width=True)
+
+                # Keywords
+                for goal in pr.funnel:
+                    fig = keyword_distribution_chart(goal)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+
+                # Abandonment
+                fig = abandonment_chart(pr)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+
+        # ── Sentiment ──
+        if results.sentiment_summary:
+            ss = results.sentiment_summary
+            st.divider()
+            st.subheader("Analisis de Sentimiento")
+
+            cs1, cs2 = st.columns(2)
+            with cs1:
+                st.plotly_chart(
+                    sentiment_pie_chart(ss.satisfied, ss.neutral, ss.frustrated),
+                    use_container_width=True,
+                )
+            with cs2:
+                st.plotly_chart(
+                    sentiment_bar_chart(ss.satisfied, ss.neutral, ss.frustrated),
+                    use_container_width=True,
+                )
+                total = ss.satisfied + ss.neutral + ss.frustrated
+                if total > 0:
+                    sm1, sm2, sm3 = st.columns(3)
+                    sm1.metric("😊 Satisfechos", ss.satisfied, f"{ss.satisfied/total*100:.1f}%")
+                    sm2.metric("😐 Neutrales", ss.neutral, f"{ss.neutral/total*100:.1f}%")
+                    sm3.metric("😤 Frustrados", ss.frustrated, f"{ss.frustrated/total*100:.1f}%", delta_color="inverse")
+
+            # Friction
+            if ss.top_friction_points:
+                st.markdown("#### Puntos de friccion")
+                for i, fp in enumerate(ss.top_friction_points):
+                    with st.container(border=True):
+                        fc1, fc2, fc3 = st.columns([4, 1, 1])
+                        fc1.markdown(f"**{i+1}.** {fp.description}")
+                        fc2.metric("Casos", fp.occurrences)
+                        fc3.metric("%", f"{fp.percentage:.1f}%")
+
+        # ── Value Suggestions ──
+        if results.suggestions:
+            st.divider()
+            st.subheader("Sugerencias de Valor")
+
+            category_icons = {
+                "autogestion": "🤖",
+                "conversion": "📈",
+                "cuello_botella": "⚠️",
+                "quick_win": "⚡",
+            }
+            category_labels = {
+                "autogestion": "Autogestion",
+                "conversion": "Conversion",
+                "cuello_botella": "Cuellos de botella",
+                "quick_win": "Quick Wins",
+            }
+            impact_colors = {"alto": "🔴", "medio": "🟡", "bajo": "🟢"}
+
+            grouped: dict[str, list] = {}
+            for s in results.suggestions:
+                grouped.setdefault(s.category, []).append(s)
+
+            for cat, items in grouped.items():
+                icon = category_icons.get(cat, "📋")
+                label = category_labels.get(cat, cat)
+                st.markdown(f"#### {icon} {label}")
+
+                for s in items:
+                    badge = impact_colors.get(s.impact, "⚪")
+                    with st.container(border=True):
+                        sg1, sg2 = st.columns([4, 1])
+                        sg1.markdown(f"**{s.title}**")
+                        sg2.markdown(f"Impacto: {badge} {s.impact}")
+                        st.markdown(s.description)
+                        if s.metric:
+                            st.caption(f"📊 {s.metric}")
+
+        # ── Actions ──
+        st.divider()
+        act1, act2, act3 = st.columns(3)
+        with act1:
+            if st.button("← Volver al analisis", use_container_width=True):
+                st.session_state.current_step = 3
+                st.rerun()
+        with act2:
+            if st.button("Nuevo analisis (mismo pipeline)", use_container_width=True):
+                st.session_state.evaluation_results = None
+                st.session_state.uploaded_df = None
+                st.session_state.current_step = 1
+                st.rerun()
+        with act3:
+            if st.button("Reiniciar todo", use_container_width=True):
+                for key, val in DEFAULTS.items():
+                    st.session_state[key] = val
+                st.rerun()

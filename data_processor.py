@@ -188,6 +188,69 @@ def get_stage_index(stage: str, pipeline_type: str) -> int:
         return -1
 
 
+def score_conversation_for_pipeline(row: pd.Series, pipeline: Pipeline) -> int:
+    """Score how well a conversation matches a pipeline. Higher = better match."""
+    historial = row.get("historial", "").lower()
+    tipificaciones = row.get("tipificaciones", "").lower()
+    etapa_csv = row.get("etapas", "").strip() if "etapas" in row.index else ""
+    score = 0
+
+    # Stage match (strong signal)
+    if etapa_csv:
+        stages = pipeline.get_stages()
+        if etapa_csv in stages:
+            score += 5
+
+    for obj in pipeline.objectives:
+        # Success/failure criteria in tipificaciones
+        if obj.success and obj.success.lower() in tipificaciones:
+            score += 3
+        if obj.failure and obj.failure.lower() in tipificaciones:
+            score += 3
+        # Keywords in historial
+        for fd in obj.field_distribution:
+            for kw in fd.keywords:
+                if kw.lower() in historial:
+                    score += 1
+
+    return score
+
+
+def classify_conversations(
+    df: pd.DataFrame, pipelines: list[Pipeline]
+) -> dict[str, pd.DataFrame]:
+    """Classify conversations into pipelines. Returns {pipeline_id: filtered_df}."""
+    if len(pipelines) <= 1:
+        # Only one pipeline: all conversations go to it
+        return {pipelines[0].id: df} if pipelines else {}
+
+    # Score each conversation against each pipeline
+    assignments: dict[str, list[int]] = {p.id: [] for p in pipelines}
+
+    for idx, row in df.iterrows():
+        scores = {p.id: score_conversation_for_pipeline(row, p) for p in pipelines}
+        best_score = max(scores.values())
+
+        if best_score > 0:
+            # Assign to the pipeline with the highest score
+            best_pipeline = max(scores, key=scores.get)
+            assignments[best_pipeline].append(idx)
+        else:
+            # No match: assign to all pipelines
+            for p_id in assignments:
+                assignments[p_id].append(idx)
+
+    result = {}
+    for p in pipelines:
+        indices = assignments[p.id]
+        if indices:
+            result[p.id] = df.loc[indices]
+        else:
+            result[p.id] = pd.DataFrame(columns=df.columns)
+
+    return result
+
+
 def evaluate_conversation_against_pipeline(
     row: pd.Series, pipeline: Pipeline
 ) -> dict:
@@ -329,6 +392,15 @@ def aggregate_funnel_results(
 
 def aggregate_all_pipelines(
     df: pd.DataFrame, pipelines: list[Pipeline]
-) -> list[PipelineResult]:
-    """Evaluate conversations against all pipelines."""
-    return [aggregate_funnel_results(df, p) for p in pipelines]
+) -> tuple[list[PipelineResult], dict[str, pd.DataFrame]]:
+    """Classify conversations and evaluate each pipeline against its filtered subset.
+
+    Returns (pipeline_results, classification_map) where classification_map is
+    {pipeline_id: filtered_df}.
+    """
+    classified = classify_conversations(df, pipelines)
+    results = []
+    for p in pipelines:
+        filtered_df = classified.get(p.id, pd.DataFrame(columns=df.columns))
+        results.append(aggregate_funnel_results(filtered_df, p))
+    return results, classified

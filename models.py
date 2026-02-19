@@ -235,6 +235,7 @@ class PipelineResult:
 class ConversationDetail:
     """Per-conversation analysis detail (for CSV export)."""
     index: int
+    pipeline_assigned: str = ""  # Name of the pipeline this conversation was assigned to
     pipeline_results: dict = field(default_factory=dict)
     # pipeline_results: {pipeline_name: {"objectives": {obj_name: bool}, "keywords": [str]}}
 

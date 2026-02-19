@@ -21,6 +21,8 @@ from data_processor import (
     conversations_to_prompt_text,
     aggregate_funnel_results,
     aggregate_all_pipelines,
+    classify_conversations,
+    evaluate_conversation_against_pipeline,
 )
 from models import (
     Pipeline,
@@ -259,10 +261,17 @@ class SalesPipelineAnalyzer:
         conversations_text = conversations_to_prompt_text(df)
         pipelines_dicts = [p.to_dict() for p in pipelines]
 
-        # Rule-based funnel aggregation
+        # Rule-based funnel aggregation (with conversation classification)
         if progress_callback:
-            progress_callback(0.2, "Analizando embudo de conversion...")
-        pipeline_results = aggregate_all_pipelines(df, pipelines)
+            progress_callback(0.2, "Clasificando conversaciones y analizando embudo...")
+        pipeline_results, classified = aggregate_all_pipelines(df, pipelines)
+
+        # Build reverse map: row index -> pipeline name
+        idx_to_pipeline: dict[int, str] = {}
+        pipeline_id_to_name = {p.id: p.name for p in pipelines}
+        for p_id, p_df in classified.items():
+            for idx in p_df.index:
+                idx_to_pipeline[idx] = pipeline_id_to_name.get(p_id, "")
 
         # Run LLM analysis graph
         state: AnalysisState = {
@@ -363,11 +372,17 @@ class SalesPipelineAnalyzer:
                         pipeline_results[0].suggestions.append(suggestion)
 
         # Build per-conversation details (for CSV export)
-        from data_processor import evaluate_conversation_against_pipeline
+        # Only evaluate each conversation against its assigned pipeline
         conversation_details = []
         for idx, row in df.iterrows():
+            assigned_pipeline_name = idx_to_pipeline.get(idx, "")
             pipe_results = {}
+
             for pipeline in pipelines:
+                # Only evaluate if this conversation is assigned to this pipeline
+                if assigned_pipeline_name and assigned_pipeline_name != pipeline.name:
+                    continue
+
                 eval_r = evaluate_conversation_against_pipeline(row, pipeline)
                 obj_map = {}
                 all_kws = []
@@ -383,6 +398,7 @@ class SalesPipelineAnalyzer:
             conversation_details.append(
                 ConversationDetail(
                     index=int(idx),
+                    pipeline_assigned=assigned_pipeline_name,
                     pipeline_results=pipe_results,
                 )
             )

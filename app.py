@@ -645,15 +645,19 @@ elif step == 4:
             export = df_source.copy()
             conv_details = getattr(results, "conversation_details", []) or []
             if conv_details:
-                # Add pipeline assignment column
+                # Add pipeline and stage assignment columns
                 pipeline_col = []
+                stage_col = []
                 for i in range(len(export)):
                     if i < len(conv_details):
                         cd = conv_details[i]
                         pipeline_col.append(getattr(cd, "pipeline_assigned", "") or "")
+                        stage_col.append(getattr(cd, "stage_assigned", "") or "")
                     else:
                         pipeline_col.append("")
+                        stage_col.append("")
                 export["Pipeline asignado"] = pipeline_col
+                export["Etapa alcanzada"] = stage_col
 
                 # Add per-pipeline objective columns
                 for pr in results.pipelines:

@@ -19,6 +19,7 @@ class AnalysisState(TypedDict):
     messages: Annotated[list, add_messages]
     pipelines_config: str       # JSON serialized list of pipeline dicts
     conversations_json: str     # JSON serialized conversation data
+    classification_results: str # JSON with per-conversation classification
     funnel_results: str         # JSON with funnel results per pipeline
     abandonment_results: str    # JSON with abandonment reasons per pipeline
     suggestions: str            # JSON with value suggestions per pipeline
@@ -98,23 +99,39 @@ RESPONDE EXCLUSIVAMENTE con un JSON valido con esta estructura:
 }""")
 
 
-FUNNEL_ANALYZER_PROMPT = SystemMessage(content="""Eres un analista experto en embudos de conversion de ventas y servicio al cliente.
+CONVERSATION_CLASSIFIER_PROMPT = SystemMessage(content="""Eres un analista experto en embudos de conversion de ventas y servicio al cliente.
 
-Tu tarea es evaluar conversaciones individuales contra los objetivos de un pipeline y determinar exito o fallo en cada objetivo.
-
-Para cada conversacion analiza:
-1. Que etapa del funnel alcanzo la conversacion
-2. Si se cumplieron los criterios de exito de cada objetivo
-3. Que keywords relevantes aparecen en la conversacion
-4. Si la conversacion fue abandonada (no alcanzo la ultima etapa)
-5. Si fue abandonada, cual fue la razon principal de abandono
+Tu tarea es analizar CADA conversacion individualmente y:
+1. ASIGNARLA al pipeline mas apropiado segun su contenido.
+2. DETERMINAR a que etapa del pipeline llego la conversacion.
+3. EVALUAR si se cumplieron los criterios de exito/fallo de cada objetivo del pipeline asignado.
+4. EXTRAER keywords relevantes encontrados en la conversacion.
+5. Si la conversacion no llego a la ultima etapa, indicar la razon de abandono.
 
 REGLAS:
+- Cada conversacion debe asignarse a EXACTAMENTE UN pipeline.
+- Lee el historial completo para entender el contexto real de la conversacion.
 - Una conversacion que alcanzo la etapa X tambien paso por todas las etapas anteriores.
-- Busca evidencia concreta en el texto de la conversacion.
+- La etapa se determina por el punto mas avanzado que alcanzo la conversacion en el funnel.
+- Busca evidencia concreta en el texto para determinar exito/fallo de objetivos.
 - Las razones de abandono deben ser especificas y accionables.
+- Si una conversacion no encaja claramente en ningun pipeline, asignala al mas cercano.
 
-Responde EXCLUSIVAMENTE con un JSON valido.""")
+Responde EXCLUSIVAMENTE con un JSON valido con esta estructura:
+{
+  "conversations": [
+    {
+      "conversation_index": 1,
+      "pipeline_id": "id del pipeline asignado",
+      "stage_reached": "nombre de la etapa alcanzada",
+      "objectives": {
+        "objective_id_1": {"success": true, "keywords": ["kw1", "kw2"]},
+        "objective_id_2": {"success": false, "keywords": []}
+      },
+      "abandonment_reason": "razon especifica si no llego a la ultima etapa, o null"
+    }
+  ]
+}""")
 
 
 VALUE_SUGGESTIONS_PROMPT = SystemMessage(content="""Eres un consultor estrategico especializado en optimizacion de experiencia conversacional, autogestion digital y conversion de ventas.

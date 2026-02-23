@@ -1,6 +1,7 @@
 """
 Plotly chart builders for the dashboard visualizations.
 """
+from __future__ import annotations
 
 import plotly.graph_objects as go
 from models import PipelineResult, FunnelGoal, get_stages_for_type

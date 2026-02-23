@@ -320,21 +320,10 @@ class SalesPipelineAnalyzer:
                             for r in reasons[:5]
                         ]
 
-                    # Enrich funnel with LLM objective results
-                    llm_objectives = llm_pr.get("objectives", [])
-                    for fg in pr.funnel:
-                        for llm_obj in llm_objectives:
-                            if llm_obj.get("objective_id") == fg.objective_id:
-                                # Use LLM counts if they differ meaningfully
-                                llm_s = llm_obj.get("success_count")
-                                llm_f = llm_obj.get("failure_count")
-                                if llm_s is not None and llm_f is not None:
-                                    fg.success_count = llm_s
-                                    fg.failure_count = llm_f
-                                    total = llm_s + llm_f
-                                    fg.success_rate = round(
-                                        (llm_s / total * 100) if total > 0 else 0, 1
-                                    )
+                    # NOTE: We keep rule-based counts (from classified/filtered
+                    # conversations) as the primary source of truth. LLM counts
+                    # are unreliable because the LLM receives all conversations,
+                    # not the filtered subset per pipeline.
 
         # Distribute suggestions per pipeline
         llm_pipelines_suggestions = suggestions_data.get("pipelines", [])

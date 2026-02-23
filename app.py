@@ -24,8 +24,7 @@ from data_processor import (
 )
 from graph import SalesPipelineAnalyzer
 from charts import (
-    funnel_chart,
-    pipeline_funnel_chart,
+    stage_distribution_chart,
     pipeline_goals_chart,
     keyword_distribution_chart,
     abandonment_chart,
@@ -732,8 +731,18 @@ elif step == 4:
                 if pr.abandonment_analysis:
                     m4.metric("Tasa abandono", f"{pr.abandonment_analysis.abandonment_rate:.1f}%")
 
-                # Funnel chart
-                st.plotly_chart(pipeline_funnel_chart(pr), use_container_width=True)
+                # Stage distribution chart (max stage reached per conversation)
+                conv_details = getattr(results, "conversation_details", []) or []
+                stage_counts: dict[str, int] = {}
+                for cd in conv_details:
+                    if getattr(cd, "pipeline_assigned", "") == pr.pipeline_name:
+                        stage = getattr(cd, "stage_assigned", "") or "Sin etapa"
+                        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+                if stage_counts:
+                    st.plotly_chart(
+                        stage_distribution_chart(stage_counts, pr.pipeline_type, pr.total_conversations),
+                        use_container_width=True,
+                    )
 
                 # Goals detail
                 st.markdown("#### Resultados por objetivo")

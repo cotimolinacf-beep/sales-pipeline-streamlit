@@ -3,7 +3,7 @@ Plotly chart builders for the dashboard visualizations.
 """
 
 import plotly.graph_objects as go
-from models import EvaluationResults, PipelineResult, FunnelGoal, get_stages_for_type
+from models import PipelineResult, FunnelGoal, get_stages_for_type
 
 
 # Color palette
@@ -16,125 +16,67 @@ MUTED = "#94a3b8"
 BG_CARD = "#ffffff"
 
 
-def funnel_chart(data: EvaluationResults) -> go.Figure:
-    """Global conversion funnel aggregated across all pipelines."""
-    sales_order = ["Awareness", "Lead", "MQL", "SQL", "Opportunity", "Customer"]
-    service_order = [
-        "Ticket creado", "Ticket abierto", "Ticket en proceso", "Ticket resuelto"
-    ]
-    all_stage_order = sales_order + service_order
-
-    stage_map: dict[str, dict] = {}
-    for pipeline in data.pipelines:
-        for goal in pipeline.funnel:
-            if goal.stage not in stage_map:
-                stage_map[goal.stage] = {"success": 0, "failure": 0}
-            stage_map[goal.stage]["success"] += goal.success_count
-            stage_map[goal.stage]["failure"] += goal.failure_count
-
-    # Order stages
-    ordered_stages = []
-    for s in all_stage_order:
-        if s in stage_map:
-            ordered_stages.append(s)
-    for s in stage_map:
-        if s not in ordered_stages:
-            ordered_stages.append(s)
-
-    if not ordered_stages:
+def stage_distribution_chart(
+    stage_counts: dict[str, int],
+    pipeline_type: str,
+    total: int,
+) -> go.Figure:
+    """Horizontal bar chart showing how many conversations reached each stage as their max."""
+    if not stage_counts:
         fig = go.Figure()
         fig.update_layout(
-            title="Embudo de conversion global",
+            title="Maximo lead alcanzado",
             annotations=[{"text": "No hay datos", "showarrow": False, "font": {"size": 16}}],
         )
         return fig
 
-    labels = []
-    values = []
-    colors = []
-    hover_texts = []
+    stages_order = get_stages_for_type(pipeline_type)
+    # Order stages, include any extra stages not in the predefined order
+    ordered = [s for s in stages_order if s in stage_counts]
+    for s in stage_counts:
+        if s not in ordered:
+            ordered.append(s)
 
-    for stage in ordered_stages:
-        s = stage_map[stage]["success"]
-        f = stage_map[stage]["failure"]
-        total = s + f
-        rate = (s / total * 100) if total > 0 else 0
-        labels.append(stage)
-        values.append(s)
-        colors.append(GREEN if rate >= 50 else RED)
-        hover_texts.append(
-            f"<b>{stage}</b><br>"
-            f"Exitosos: {s:,}<br>"
-            f"Fallidos: {f:,}<br>"
-            f"Tasa: {rate:.1f}%"
-        )
+    labels = list(reversed(ordered))  # Reverse so highest stage is at top
+    values = [stage_counts.get(s, 0) for s in labels]
+    pcts = [(v / total * 100) if total > 0 else 0 for v in values]
+
+    # Color gradient: later stages get greener
+    n = len(labels)
+    colors = []
+    for i, label in enumerate(labels):
+        # i=0 is the highest stage (top), i=n-1 is the lowest
+        idx_in_order = ordered.index(label) if label in ordered else 0
+        ratio = idx_in_order / max(len(ordered) - 1, 1)
+        if ratio >= 0.7:
+            colors.append(GREEN)
+        elif ratio >= 0.4:
+            colors.append(YELLOW)
+        else:
+            colors.append("#fb923c")  # orange for early stages
+
+    hover_texts = [
+        f"<b>{s}</b><br>Conversaciones: {v:,}<br>Porcentaje: {p:.1f}%"
+        for s, v, p in zip(labels, values, pcts)
+    ]
 
     fig = go.Figure(
-        go.Funnel(
+        go.Bar(
             y=labels,
             x=values,
-            textinfo="value+percent initial",
-            marker={"color": colors, "line": {"width": 1, "color": "white"}},
+            orientation="h",
+            marker_color=colors,
+            text=[f"{v} ({p:.1f}%)" for v, p in zip(values, pcts)],
+            textposition="outside",
             hovertext=hover_texts,
             hoverinfo="text",
-            connector={"line": {"color": PRIMARY_LIGHT, "width": 1}},
         )
     )
     fig.update_layout(
-        title={"text": "Embudo de conversion global", "font": {"size": 18}},
-        height=400,
-        margin=dict(l=20, r=20, t=50, b=20),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    return fig
-
-
-def pipeline_funnel_chart(pipeline: PipelineResult) -> go.Figure:
-    """Funnel chart for a single pipeline's objectives ordered by stage."""
-    goals = pipeline.funnel
-    if not goals:
-        fig = go.Figure()
-        fig.update_layout(title=f"Embudo - {pipeline.pipeline_name}")
-        return fig
-
-    stages_order = get_stages_for_type(pipeline.pipeline_type)
-    sorted_goals = sorted(
-        goals,
-        key=lambda g: stages_order.index(g.stage) if g.stage in stages_order else 999,
-    )
-
-    labels = [f"{g.stage}: {g.objective_name}" for g in sorted_goals]
-    values = [g.success_count for g in sorted_goals]
-    totals = [g.success_count + g.failure_count for g in sorted_goals]
-    colors = []
-    hover_texts = []
-    for g in sorted_goals:
-        rate = g.success_rate
-        colors.append(GREEN if rate >= 60 else YELLOW if rate >= 30 else RED)
-        hover_texts.append(
-            f"<b>{g.objective_name}</b><br>"
-            f"Etapa: {g.stage}<br>"
-            f"Exitosos: {g.success_count:,}<br>"
-            f"Fallidos: {g.failure_count:,}<br>"
-            f"Tasa: {rate:.1f}%"
-        )
-
-    fig = go.Figure(
-        go.Funnel(
-            y=labels,
-            x=values,
-            textinfo="value+percent initial",
-            marker={"color": colors, "line": {"width": 1, "color": "white"}},
-            hovertext=hover_texts,
-            hoverinfo="text",
-            connector={"line": {"color": PRIMARY_LIGHT, "width": 1}},
-        )
-    )
-    fig.update_layout(
-        title={"text": f"Embudo de conversion", "font": {"size": 16}},
-        height=max(250, len(sorted_goals) * 60 + 80),
-        margin=dict(l=20, r=20, t=50, b=20),
+        title={"text": "Maximo lead alcanzado por conversacion", "font": {"size": 16}},
+        xaxis_title="Conversaciones",
+        height=max(250, len(labels) * 50 + 80),
+        margin=dict(l=20, r=80, t=50, b=30),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )

@@ -4,7 +4,7 @@ Plotly chart builders for the dashboard visualizations.
 from __future__ import annotations
 
 import plotly.graph_objects as go
-from models import PipelineResult, FunnelGoal, get_stages_for_type
+from models import PipelineResult, get_stages_for_type
 
 
 # Color palette
@@ -78,85 +78,6 @@ def stage_distribution_chart(
         xaxis_title="Conversaciones",
         height=max(250, len(labels) * 50 + 80),
         margin=dict(l=20, r=80, t=50, b=30),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    return fig
-
-
-def pipeline_goals_chart(pipeline: PipelineResult) -> go.Figure:
-    """Horizontal bar chart showing success/failure per objective in a pipeline."""
-    goals = pipeline.funnel
-    if not goals:
-        fig = go.Figure()
-        fig.update_layout(title=pipeline.pipeline_name)
-        return fig
-
-    names = [g.objective_name for g in goals]
-    success = [g.success_count for g in goals]
-    failure = [g.failure_count for g in goals]
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            y=names,
-            x=success,
-            name="Exitosos",
-            orientation="h",
-            marker_color=GREEN,
-            text=[f"{s}" for s in success],
-            textposition="inside",
-        )
-    )
-    fig.add_trace(
-        go.Bar(
-            y=names,
-            x=failure,
-            name="Fallidos",
-            orientation="h",
-            marker_color=RED,
-            text=[f"{f}" for f in failure],
-            textposition="inside",
-        )
-    )
-    fig.update_layout(
-        barmode="stack",
-        title={"text": f"Objetivos - {pipeline.pipeline_name}", "font": {"size": 16}},
-        xaxis_title="Conversaciones",
-        height=max(200, len(goals) * 60 + 80),
-        margin=dict(l=20, r=20, t=50, b=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    return fig
-
-
-def keyword_distribution_chart(goal: FunnelGoal) -> go.Figure | None:
-    """Horizontal bar chart for keyword distribution of a goal."""
-    if not goal.keyword_distribution:
-        return None
-
-    kw = goal.keyword_distribution[:7]
-    labels = [k.value for k in kw]
-    counts = [k.count for k in kw]
-    pcts = [k.percentage for k in kw]
-
-    fig = go.Figure(
-        go.Bar(
-            y=labels,
-            x=counts,
-            orientation="h",
-            marker_color=PRIMARY_LIGHT,
-            text=[f"{c} ({p:.1f}%)" for c, p in zip(counts, pcts)],
-            textposition="outside",
-        )
-    )
-    fig.update_layout(
-        title={"text": f"Keywords - {goal.objective_name}", "font": {"size": 14}},
-        xaxis_title="Ocurrencias",
-        height=max(180, len(kw) * 35 + 80),
-        margin=dict(l=20, r=80, t=40, b=30),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )

@@ -25,8 +25,6 @@ from data_processor import (
 from graph import SalesPipelineAnalyzer
 from charts import (
     stage_distribution_chart,
-    pipeline_goals_chart,
-    keyword_distribution_chart,
     abandonment_chart,
 )
 
@@ -744,11 +742,8 @@ elif step == 4:
                         use_container_width=True,
                     )
 
-                # Goals detail
-                st.markdown("#### Resultados por objetivo")
-                st.plotly_chart(pipeline_goals_chart(pr), use_container_width=True)
-
-                # Objective detail cards
+                # Objective summary cards
+                st.markdown("#### Objetivos")
                 for goal in pr.funnel:
                     star = "⭐ " if goal.is_conversion_indicator else ""
                     with st.container(border=True):
@@ -758,13 +753,6 @@ elif step == 4:
                         gc2.metric("Exitosos", goal.success_count)
                         gc3.metric("Fallidos", goal.failure_count)
                         gc4.metric("Tasa", f"{goal.success_rate:.1f}%")
-
-                        if goal.keyword_distribution:
-                            kw_tags = " · ".join(
-                                f"`{kd.value}` ({kd.count})"
-                                for kd in goal.keyword_distribution[:6]
-                            )
-                            st.caption(f"Keywords: {kw_tags}")
 
                 # Abandonment reasons
                 if pr.abandonment_analysis and pr.abandonment_analysis.top_abandonment_reasons:
